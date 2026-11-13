@@ -8,10 +8,11 @@ import { makePendingClaudeProvider } from "./ClaudeProvider.ts";
 const defaultSettings = Schema.decodeSync(ClaudeSettings)({});
 
 describe("makePendingClaudeProvider", () => {
-  it.effect("lists Auto Low, Medium and High without any custom model settings", () =>
+  it.effect("lists Auto Low, Medium and High after the real models, with no settings", () =>
     Effect.gen(function* () {
       const provider = yield* makePendingClaudeProvider(defaultSettings);
-      expect(provider.models.slice(0, 3).map((model) => [model.slug, model.name])).toEqual([
+      expect(provider.models[0]?.slug).toMatch(/^claude-/);
+      expect(provider.models.slice(-3).map((model) => [model.slug, model.name])).toEqual([
         ["auto-low", "Auto Low"],
         ["auto-medium", "Auto Medium"],
         ["auto-high", "Auto High"],

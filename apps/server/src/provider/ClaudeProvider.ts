@@ -87,7 +87,8 @@ function claudeProviderModels(
   customModels: ClaudeSettings["customModels"],
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings(
-    [...AUTO_MODELS, ...builtInModels],
+    // After the real models: callers that default to a provider's first model keep a real one.
+    [...builtInModels, ...AUTO_MODELS],
     customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   ).map((model) =>
