@@ -52,8 +52,9 @@ const opencode = (model: string, effort: string): AutoCandidate => ({
 });
 
 /**
- * Orchestrator candidates per level, best first. Each level starts on its Claude model and
- * steps down through the other subscriptions as limits run out.
+ * Orchestrator candidates per level, best first: Claude A/B, Claude on Antigravity A/B, ChatGPT
+ * (Codex), Grok, Gemini, then free OpenCode models. Models a provider does not list are skipped,
+ * so paid-plan models (Sol, Astra) wait until the plan has them.
  */
 const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>> = {
   high: [
@@ -62,8 +63,9 @@ const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>>
     antigravity("claude-opus-4-6-thinking", "high"),
     codex("gpt-6.1-sol", "high"),
     codex("gpt-6-astra", "high"),
-    grok("high"),
     codex("gpt-6-luna", "high"),
+    grok("high"),
+    antigravity("gemini-3.8-flash", "high"),
   ],
   medium: [
     claude("claude-opus-5-5", "medium"),
@@ -72,15 +74,21 @@ const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>>
     codex("gpt-6.1-sol", "medium"),
     codex("gpt-6-astra", "medium"),
     claude("claude-sonnet-5-5", "medium"),
-    grok("medium"),
+    antigravity("claude-sonnet-4-6", "medium"),
     codex("gpt-6-luna", "medium"),
+    grok("medium"),
+    antigravity("gemini-3.8-flash", "medium"),
+    opencode("opencode/big-pickle", "medium"),
   ],
   low: [
     claude("claude-sonnet-5-5", "low"),
     claude("claude-haiku-5-5", "low"),
     antigravity("claude-sonnet-4-6", "low"),
+    antigravity("gemini-3.8-flash", "low"),
     opencode("opencode/big-pickle", "medium"),
+    opencode("opencode/beam-free", "medium"),
     opencode("opencode/deepseek-v4.1-flash-free", "medium"),
+    opencode("opencode/glm-5.3-flash-free", "medium"),
     codex("gpt-6-luna", "low"),
     grok("low"),
   ],

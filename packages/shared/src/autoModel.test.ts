@@ -207,6 +207,50 @@ describe("resolveAutoModelSelection", () => {
     });
   });
 
+  it("after every Claude subscription, uses ChatGPT, then Grok, then Gemini", () => {
+    const other = (id: string, driver: string, slug: string, optionId: string) =>
+      ({
+        ...claude(id, 0, false),
+        driver: ProviderDriverKind.make(driver),
+        models: [
+          {
+            slug,
+            name: slug,
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: optionId,
+                  label: "Effort",
+                  type: "select" as const,
+                  options: ["low", "medium", "high"].map((value) => ({ id: value, label: value })),
+                },
+              ],
+            },
+          },
+        ],
+        usageLimits: undefined,
+      }) as unknown as ServerProvider;
+    const claudeOut = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
+    const codex = other("codex", "codex", "gpt-6-luna", "reasoningEffort");
+    const grok = other("grok", "grok", "grok-4.7", "reasoningEffort");
+    const gemini = other("antigravity", "antigravity", "gemini-3.8-flash", "thinking_level");
+    const route = (providers: ServerProvider[]) =>
+      resolveAutoModelSelection({ selection: auto("high"), providers, now })?.selection;
+
+    expect(route([...claudeOut, gemini, grok, codex])).toEqual({
+      instanceId: "codex",
+      model: "gpt-6-luna",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+    expect(route([...claudeOut, gemini, grok])?.instanceId).toBe("grok");
+    expect(route([...claudeOut, gemini])).toEqual({
+      instanceId: "antigravity",
+      model: "gemini-3.8-flash",
+      options: [{ id: "thinking_level", value: "high" }],
+    });
+  });
+
   it("reads the level from auto-low / auto-medium / auto-high", () => {
     const providers = [claude("claudeAuto", 10)];
     const pick = (model: string) =>
