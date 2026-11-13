@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { LimitPoolWindow } from "./usageLimits.ts";
@@ -5,7 +6,7 @@ import { poolBurn, projectionHorizon, projectPool, recordedPool } from "./usageP
 
 const HOUR = 3_600_000;
 const now = Date.parse("2026-11-12T12:00:00.000Z");
-const iso = (at: number) => new Date(at).toISOString();
+const iso = (at: number) => DateTime.formatIso(DateTime.makeUnsafe(at));
 
 function pool(
   members: ReadonlyArray<{ key: string; used: number; resetsIn?: number; mins?: number }>,
