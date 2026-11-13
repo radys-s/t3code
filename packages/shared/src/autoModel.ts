@@ -17,7 +17,8 @@ const AUTO_MODEL_SLUG = "auto";
 const AUTO_LEVELS = ["low", "medium", "high"] as const;
 type AutoLevel = (typeof AUTO_LEVELS)[number];
 const DEFAULT_LEVEL: AutoLevel = "medium";
-/** Above this peak usage, a sticky model gives way when another candidate has more room. */
+/** At this peak usage an account counts as nearly out: a sticky model gives way and routing
+ * moves to an account with room. */
 const STICKY_MAX_USED_PERCENT = 90;
 
 interface AutoCandidate {
@@ -127,7 +128,7 @@ export const AUTO_LEVEL_DESCRIPTOR: ProviderOptionDescriptor = {
   ],
 };
 
-/** Accounts whose 5-hour use differs by less than this many points count as equally free. */
+/** Accounts whose 5-hour use differs by less than this many points count as equally far along. */
 const SESSION_BAND_PERCENT = 10;
 
 function sessionUsedPercent(provider: ServerProvider): number {
@@ -145,18 +146,26 @@ function weeklyResetAt(provider: ServerProvider): number {
 }
 
 /**
- * Best instance first: Auto-aware (carries the Auto prompt), then the freer 5-hour window,
- * then, between accounts with similar 5-hour use, the one whose weekly quota resets first.
+ * Best instance first: Auto-aware, then accounts under 90% everywhere. Among those, the further
+ * along 5-hour window, so windows stagger (one refreshes while the other runs); within 10
+ * points, the sooner weekly reset. Past 90% everywhere, the most left.
  */
 function compareInstances(a: ServerProvider, b: ServerProvider): number {
   const aware = Number(isAutoAware(b)) - Number(isAutoAware(a));
   if (aware !== 0) return aware;
-  const session = sessionUsedPercent(a) - sessionUsedPercent(b);
+  const room = Number(hasRoom(b)) - Number(hasRoom(a));
+  if (room !== 0) return room;
+  if (!hasRoom(a)) return peakUsedPercent(a) - peakUsedPercent(b);
+  const session = sessionUsedPercent(b) - sessionUsedPercent(a);
   if (Math.abs(session) >= SESSION_BAND_PERCENT) return session;
   const weekly = weeklyResetAt(a) - weeklyResetAt(b);
   if (Number.isFinite(weekly) && weekly !== 0) return weekly;
   if (weekly === Infinity || weekly === -Infinity) return weekly > 0 ? 1 : -1;
   return session || peakUsedPercent(a) - peakUsedPercent(b);
+}
+
+function hasRoom(provider: ServerProvider): boolean {
+  return peakUsedPercent(provider) < STICKY_MAX_USED_PERCENT;
 }
 
 function peakUsedPercent(provider: ServerProvider): number {
