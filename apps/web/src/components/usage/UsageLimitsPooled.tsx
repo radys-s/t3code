@@ -6,6 +6,7 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
+  formatDuration,
   formatResetsIn,
   type LimitAccount,
   type LimitPool,
@@ -16,6 +17,12 @@ import {
   type ResetCreditChoice,
   resetCreditChoices,
 } from "@t3tools/shared/usageLimits";
+import {
+  poolBurn,
+  projectionHorizon,
+  projectPool,
+  recordedPool,
+} from "@t3tools/shared/usagePoolProjection";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
@@ -25,6 +32,7 @@ import {
   type ReactNode,
   type RefObject,
   use,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -42,6 +50,10 @@ import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
+import { UsagePoolChart } from "./UsagePoolChart";
+import { poolHistoryKey, readPoolHistory, recordPoolReadings } from "./usagePoolHistory";
+
+const BURN_LOOKBACK_MS = 3 * 3_600_000;
 
 function accountInitials(email: string): string {
   const [local = "", domain = ""] = email.split("@");
@@ -530,45 +542,104 @@ function PoolBar({
   );
 }
 
+function PoolStat({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="truncate text-sm font-medium text-foreground tabular-nums">{children}</span>
+    </div>
+  );
+}
+
 function PoolWindowCard({
   pool,
+  historyKey,
   color,
   now,
   label,
   description,
 }: {
   readonly pool: LimitPoolWindow;
+  readonly historyKey: string;
   readonly color: string;
   readonly now: number;
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
 }) {
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const samples = readPoolHistory(historyKey);
+  const horizon = projectionHorizon(pool);
+  const burn = poolBurn(pool, samples, now, BURN_LOOKBACK_MS);
+  const projection = projectPool(pool, now, { burnPerHour: burn.perHour, horizonMs: horizon });
+  const from = now - horizon * 0.3;
+  const formatTime = (at: number) =>
+    formatUpcomingTimestamp(new Date(at).toISOString(), timestampFormat, now);
+  const nextRefill = projection.refills[0];
+  const firstEmpty = projection.firstEmpty
+    ? pool.members.find((member) => member.account.key === projection.firstEmpty?.accountKey)
+    : undefined;
+  const burnText = `${burn.perHour >= 10 ? Math.round(burn.perHour) : burn.perHour.toFixed(1)}%/h`;
   return (
-    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
-      <div className="flex flex-col gap-1">
-        {label !== null ? (
-          <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
-        ) : null}
-        <span className="flex items-baseline gap-2">
-          <span className="text-3xl font-semibold text-foreground tabular-nums">
-            {pool.remainingPercent}%
+    <div className="flex flex-col gap-3 rounded-lg border border-border/60 p-4">
+      <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-3">
+        <div className="flex flex-col gap-1">
+          {label !== null ? (
+            <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
+          ) : null}
+          <span className="flex items-baseline gap-2">
+            <span className="text-4xl font-semibold text-foreground tabular-nums">
+              {Math.round(projection.remaining)}%
+            </span>
+            <span className="inline-flex items-center gap-2 text-sm text-muted-foreground tabular-nums">
+              <span>of {projection.capacity}%</span>
+              {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
+            </span>
           </span>
-          <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <span>left</span>
-            {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
-          </span>
-        </span>
-        {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
-          </span>
-        ) : null}
+        </div>
+        <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-4">
+          <PoolStat label="Pool empty">
+            {projection.poolEmpty === null
+              ? `Not by ${new Date(now + horizon).toLocaleDateString([], { month: "short", day: "numeric" })}`
+              : projection.poolEmpty <= now
+                ? "Empty now"
+                : formatTime(projection.poolEmpty)}
+          </PoolStat>
+          <PoolStat label="First empty">
+            {firstEmpty && projection.firstEmpty ? (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                {pool.members.length > 1 ? (
+                  <AccountName account={firstEmpty.account} className="min-w-0 truncate" />
+                ) : null}
+                <span>
+                  {projection.firstEmpty.at <= now
+                    ? "now"
+                    : `in ${formatDuration(projection.firstEmpty.at - now)}`}
+                </span>
+              </span>
+            ) : (
+              "None"
+            )}
+          </PoolStat>
+          <PoolStat label="Next reset">
+            {nextRefill ? `+${Math.round(nextRefill.restores)}% ${formatTime(nextRefill.at)}` : "–"}
+          </PoolStat>
+          <PoolStat label={burn.source === "measured" ? "Burn, last 3h" : "Burn, window avg"}>
+            {burnText}
+          </PoolStat>
+        </div>
       </div>
+      <UsagePoolChart
+        color={color}
+        label={label ?? pool.label}
+        recorded={recordedPool(pool, samples, from)}
+        projection={projection}
+        from={from}
+        to={now + horizon}
+        now={now}
+        formatTime={formatTime}
+      />
       <PoolBar pool={pool} color={color} now={now} />
-      {description ? (
-        <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
-      ) : null}
+      {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
     </div>
   );
 }
@@ -596,6 +667,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
             pool={window}
+            historyKey={poolHistoryKey(pool, window)}
             color={color}
             now={now}
             label={details?.label}
@@ -603,6 +675,58 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           />
         );
       })}
+    </section>
+  );
+}
+
+/** One row per subscription: every window it reports, so no account hides inside a pool. */
+function SubscriptionsOverview({
+  pools,
+  now,
+}: {
+  readonly pools: readonly LimitPool[];
+  readonly now: number;
+}) {
+  const rows = pools.flatMap((pool) => pool.accounts.map((account) => ({ pool, account })));
+  if (rows.length === 0) return null;
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium text-foreground">Subscriptions</h2>
+      <div className="divide-y divide-border/60 rounded-lg border border-border/60">
+        {rows.map(({ pool, account }) => (
+          <div
+            key={account.key}
+            className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2.5 text-xs"
+          >
+            <span className="flex w-40 min-w-0 shrink-0 items-center gap-2">
+              <ProviderInstanceIcon
+                driverKind={pool.driver}
+                displayName={providerClients.get(pool.driver)?.label ?? String(pool.driver)}
+                indicatorBackground="var(--background)"
+                className="size-4 shrink-0"
+                iconClassName="size-3.5 text-foreground/80"
+              />
+              <AccountName
+                account={account}
+                className="min-w-0 truncate font-medium text-foreground"
+              />
+            </span>
+            {account.limits.windows.map((window) => {
+              const resetsIn = formatResetsIn(window, now);
+              return (
+                <span
+                  key={`${window.kind}:${window.id}`}
+                  className="inline-flex items-center gap-1.5 text-muted-foreground tabular-nums"
+                >
+                  <span>{window.label}</span>
+                  <span className="font-semibold text-foreground">{remainingPercent(window)}%</span>
+                  {resetsIn ? <span>{resetsIn.replace("resets in ", "↻ ")}</span> : null}
+                </span>
+              );
+            })}
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -617,6 +741,12 @@ export function UsageLimitsPooled({
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  // Readings are stamped with each provider's checkedAt, so re-renders of the same data store
+  // nothing new.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps this browser's localStorage reading history in step with the limits it has been shown
+  useEffect(() => {
+    recordPoolReadings(pools, now);
+  }, [pools, now]);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
   return (
@@ -626,6 +756,7 @@ export function UsageLimitsPooled({
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
+      <SubscriptionsOverview pools={pools} now={now} />
       <SegmentPopoverContext value={segmentPopover}>
         {pools.map((pool) => (
           <Fragment key={pool.driver}>

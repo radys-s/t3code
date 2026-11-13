@@ -41,6 +41,8 @@ import {
   ComboboxListVirtualized,
 } from "../ui/combobox";
 import { ModelEsque } from "./providerIconUtils";
+import { isAutoModelSlug } from "@t3tools/shared/autoModel";
+import type { AutoRoute } from "./autoRoute";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { registerModelPickerContent } from "../../modelPickerVisibility";
 import { primaryServerKeybindingsAtom } from "../../state/server";
@@ -328,6 +330,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   workspaceCwd?: string | null;
   activeInstanceId: ProviderInstanceId;
   model: string;
+  /** What an Auto model row (`auto`, `auto-low`, ...) routes to right now; its row shows it. */
+  autoRouteFor?: (slug: string) => AutoRoute | null;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   lockedProvider: ProviderDriverKind | null;
@@ -776,6 +780,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     modelJumpLabelByKey,
     activeModelKey,
     selectedModelKeySet,
+    autoRouteLabels: ["auto", "auto-low", "auto-medium", "auto-high"]
+      .map((slug) => props.autoRouteFor?.(slug)?.label ?? "")
+      .join("|"),
   };
 
   const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -1035,15 +1042,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 }
                 const disabledReason =
                   getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                const autoRoute = isAutoModelSlug(model.slug)
+                  ? (props.autoRouteFor?.(model.slug) ?? null)
+                  : null;
                 return (
                   <ModelListRow
                     key={modelKey}
                     index={index}
                     slug={model.slug}
-                    name={model.name}
+                    name={autoRoute ? `${model.name} · ${autoRoute.label}` : model.name}
                     subProvider={model.subProvider}
                     instanceId={model.instanceId}
-                    driverKind={model.driverKind}
+                    driverKind={autoRoute?.driverKind ?? model.driverKind}
                     providerDisplayName={model.instanceDisplayName}
                     providerAccentColor={model.instanceAccentColor}
                     acpRegistryAgentId={model.acpRegistryAgentId}
