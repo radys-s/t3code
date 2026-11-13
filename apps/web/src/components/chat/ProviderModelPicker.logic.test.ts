@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  autoLevelsFirst,
   retainedModelWhileProviderLocked,
   withPinnedAutoLevels,
 } from "./ProviderModelPicker.logic";
@@ -53,5 +54,22 @@ describe("withPinnedAutoLevels", () => {
 
   it("changes nothing when no Claude instance lists the Auto levels", () => {
     expect(withPinnedAutoLevels(saved, entries.slice(0, 1), options)).toBe(saved);
+  });
+});
+
+describe("autoLevelsFirst", () => {
+  it("puts Auto High, Medium and Low ahead of other favorites, keeping the rest in order", () => {
+    const items = ["gpt-6-luna", "auto-low", "grok-4.7", "auto-high", "auto-medium"].map(
+      (slug) => ({
+        slug,
+      }),
+    );
+    expect(autoLevelsFirst(items).map((item) => item.slug)).toEqual([
+      "auto-high",
+      "auto-medium",
+      "auto-low",
+      "gpt-6-luna",
+      "grok-4.7",
+    ]);
   });
 });

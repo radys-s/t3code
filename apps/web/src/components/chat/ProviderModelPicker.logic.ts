@@ -44,3 +44,10 @@ export function withPinnedAutoLevels(
   if (!host) return favorites;
   return [...levels.map((model) => ({ provider: host.instanceId, model })), ...favorites];
 }
+
+/** Favorites view order: Auto High, Medium, Low first, then the rest as sorted. */
+export function autoLevelsFirst<T extends { readonly slug: string }>(items: ReadonlyArray<T>): T[] {
+  const levels = AUTO_LEVEL_MODELS.map((model) => model.slug).reverse();
+  const auto = levels.flatMap((slug) => items.filter((item) => item.slug === slug));
+  return [...auto, ...items.filter((item) => !levels.includes(item.slug))];
+}

@@ -40,7 +40,7 @@ import {
   ComboboxItem,
   ComboboxListVirtualized,
 } from "../ui/combobox";
-import { withPinnedAutoLevels } from "./ProviderModelPicker.logic";
+import { autoLevelsFirst, withPinnedAutoLevels } from "./ProviderModelPicker.logic";
 import { ModelEsque } from "./providerIconUtils";
 import { isAutoModelSlug } from "@t3tools/shared/autoModel";
 import type { AutoRoute } from "./autoRoute";
@@ -676,11 +676,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       result = result.filter((m) => m.instanceId === selectedInstanceId);
     }
 
-    return sortProviderModelItems(result, {
+    const sorted = sortProviderModelItems(result, {
       favoriteModelKeys: favoritesSet,
       groupFavorites: selectedInstanceId !== "favorites",
       instanceOrder: selectedInstanceId === "favorites" ? instanceOrder : [],
     });
+    return selectedInstanceId === "favorites" ? autoLevelsFirst(sorted) : sorted;
   })();
 
   const legacySection = (() => {
