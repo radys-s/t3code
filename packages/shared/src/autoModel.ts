@@ -187,9 +187,12 @@ function peakUsedPercent(provider: ServerProvider): number {
   return Math.max(0, ...(provider.usageLimits?.windows ?? []).map((w) => w.usedPercent ?? 0));
 }
 
-/** Instances that list the `auto` model carry the Auto-mode prompt, so they win ties. */
+/**
+ * Instances that list the plain `auto` model carry the Auto-mode prompt, so they win ties. Every
+ * Claude provider lists the level rows, so those do not count.
+ */
 function isAutoAware(provider: ServerProvider): boolean {
-  return provider.models.some((model) => isAutoModelSlug(model.slug));
+  return provider.models.some((model) => model.slug === AUTO_MODEL_SLUG);
 }
 
 function usable(provider: ServerProvider, model: string, now: number): boolean {

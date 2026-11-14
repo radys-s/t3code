@@ -106,6 +106,27 @@ describe("resolveAutoModelSelection", () => {
     ).toBe("claudeAutoB");
   });
 
+  it("prefers the instances that carry the Auto prompt over plain ones listing the levels", () => {
+    // Every Claude provider lists auto-low/medium/high; only the Auto instances list `auto`.
+    // The plain instance's 5-hour window is further along, so only the Auto-aware rule picks B.
+    const plain = {
+      ...claude("claudeAgent_2", 40, false),
+      models: [
+        ...claude("claudeAgent_2", 40, false).models,
+        ...["auto-low", "auto-medium", "auto-high"].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: { optionDescriptors: [] },
+        })),
+      ],
+    } as unknown as ServerProvider;
+    const providers = [plain, claude("claudeAutoB", 0)];
+    expect(
+      resolveAutoModelSelection({ selection: auto(), providers, now })?.selection.instanceId,
+    ).toBe("claudeAutoB");
+  });
+
   it("keeps the thread's current model until it passes 90% used", () => {
     const current = { instanceId: ProviderInstanceId.make("claudeAuto"), model: "claude-opus-5-5" };
     const calm = [claude("claudeAuto", 60), claude("claudeAutoB", 5)];
