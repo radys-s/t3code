@@ -7,7 +7,7 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { routedAutoLevel } from "@t3tools/shared/autoModel";
+import { isAutoModelSlug, routedAutoLevel } from "@t3tools/shared/autoModel";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,7 +16,7 @@ import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { markAutoCooldown } from "./AutoCooldown.ts";
+import { markAutoCooldown, markAutoModelUnavailable } from "./AutoCooldown.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 /** Failures that mean "this account has no room right now", besides the usage_limit class. */
@@ -37,11 +37,23 @@ export const MAX_FAILOVERS_PER_HOUR = 6;
 /** The run's error item lands around the same time as the run update; let the shell catch up. */
 const SETTLE_DELAY_MS = 1_500;
 
+/** Codex reports a model the account's plan cannot run as a missing model, not a limit. */
+const UNSUPPORTED_MODEL_CODES: ReadonlySet<string> = new Set([
+  "modelNotFound",
+  "unsupported_model",
+]);
+/** Plans do not change mid-session, so keep routing around a rejected model for a while. */
+const UNSUPPORTED_MODEL_COOLDOWN_MS = 24 * 60 * 60_000;
+
 const AUTO_FAILOVER_TEXT =
   "Auto moved this thread to another subscription because the last one hit its usage limit. Continue where you left off.";
+const UNSUPPORTED_MODEL_FAILOVER_TEXT =
+  "Auto picked another model because the last one is not available on this account. Continue where you left off.";
 
 export interface AutoFailoverPlan {
   readonly failedInstanceId: string;
+  /** Set when the account cannot run this model at all, rather than being out of room. */
+  readonly failedModel?: string | undefined;
   readonly cooldownUntilMs: number;
   readonly command: Extract<
     Parameters<Orchestrator.OrchestratorV2Shape["dispatch"]>[0],
@@ -80,15 +92,24 @@ export function autoFailoverPlan(input: {
   const level = routed ?? impliedAutoLevel(shell.modelSelection.model);
   const limited = shell.lastErrorClass === "usage_limit";
   const noCapacity = !limited && CAPACITY_CODES.has(shell.lastErrorCode ?? "");
-  if (!limited && !noCapacity) return null;
+  const failedModel =
+    UNSUPPORTED_MODEL_CODES.has(shell.lastErrorCode ?? "") &&
+    !isAutoModelSlug(shell.modelSelection.model)
+      ? shell.modelSelection.model
+      : undefined;
+  if (!limited && !noCapacity && failedModel === undefined) return null;
   const resetMs = shell.usageLimitResetAt ? Date.parse(shell.usageLimitResetAt) : Number.NaN;
-  const cooldownUntilMs = noCapacity
-    ? nowMs + CAPACITY_COOLDOWN_MS
-    : Number.isFinite(resetMs) && resetMs > nowMs
-      ? Math.min(resetMs, nowMs + MAX_COOLDOWN_MS)
-      : nowMs + LIMIT_COOLDOWN_MS;
+  const cooldownUntilMs =
+    failedModel !== undefined
+      ? nowMs + UNSUPPORTED_MODEL_COOLDOWN_MS
+      : noCapacity
+        ? nowMs + CAPACITY_COOLDOWN_MS
+        : Number.isFinite(resetMs) && resetMs > nowMs
+          ? Math.min(resetMs, nowMs + MAX_COOLDOWN_MS)
+          : nowMs + LIMIT_COOLDOWN_MS;
   return {
     failedInstanceId: input.failedInstanceId,
+    ...(failedModel !== undefined ? { failedModel } : {}),
     cooldownUntilMs,
     command: {
       type: "message.dispatch",
@@ -98,7 +119,7 @@ export function autoFailoverPlan(input: {
       threadId: shell.id,
       // The Auto level row; routing replaces it with the next usable subscription.
       modelSelection: { instanceId: shell.modelSelection.instanceId, model: `auto-${level}` },
-      text: AUTO_FAILOVER_TEXT,
+      text: failedModel !== undefined ? UNSUPPORTED_MODEL_FAILOVER_TEXT : AUTO_FAILOVER_TEXT,
       attachments: [],
       createdBy: "agent",
       creationSource: "server",
@@ -141,8 +162,10 @@ export const make = Effect.gen(function* () {
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
       const plan = autoFailoverPlan({ shell, runId, failedInstanceId, nowMs });
       if (plan === null) return;
-      // Bench the instance either way, so the next message the user sends routes around it.
-      markAutoCooldown(plan.failedInstanceId, plan.cooldownUntilMs);
+      // An unsupported model benches only itself; a full account bench would block its alternatives.
+      if (plan.failedModel !== undefined)
+        markAutoModelUnavailable(plan.failedInstanceId, plan.failedModel, plan.cooldownUntilMs);
+      else markAutoCooldown(plan.failedInstanceId, plan.cooldownUntilMs);
       // The same switch as resuming at reset: off means T3 sends nothing on its own.
       if (!(yield* settings.getSettings).autoResumeLimitedThreads) return;
       const threadHistory = history.get(threadId) ?? [];

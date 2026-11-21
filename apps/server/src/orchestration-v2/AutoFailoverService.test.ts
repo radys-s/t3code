@@ -6,7 +6,13 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { clearAutoCooldowns, isAutoCoolingDown, markAutoCooldown } from "./AutoCooldown.ts";
+import {
+  clearAutoCooldowns,
+  isAutoCoolingDown,
+  isAutoModelUnavailable,
+  markAutoCooldown,
+  markAutoModelUnavailable,
+} from "./AutoCooldown.ts";
 import { admitFailover, autoFailoverPlan, MAX_FAILOVERS_PER_HOUR } from "./AutoFailoverService.ts";
 
 const now = Date.parse("2026-11-14T20:00:00.000Z");
@@ -71,6 +77,23 @@ describe("autoFailoverPlan", () => {
     expect(result?.cooldownUntilMs).toBe(now + 5 * 60_000);
   });
 
+  it("parks a model the account cannot run and reroutes the Auto thread", () => {
+    const result = plan(
+      shell({
+        lastErrorClass: "provider_error",
+        lastErrorCode: "modelNotFound",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6.1-sol",
+          options: [{ id: "auto", value: "high" }],
+        },
+      }),
+    );
+    expect(result?.failedModel).toBe("gpt-6.1-sol");
+    expect(result?.cooldownUntilMs).toBe(now + 24 * 60 * 60_000);
+    expect(result?.command.modelSelection?.model).toBe("auto-high");
+  });
+
   it("moves a hand-picked thread to Auto at the level its model implies", () => {
     const picked = (model: string) =>
       shell({ modelSelection: { instanceId: ProviderInstanceId.make("grok"), model } });
@@ -121,6 +144,15 @@ describe("admitFailover", () => {
 });
 
 describe("AutoCooldown", () => {
+  it("benches only the model the account cannot run", () => {
+    clearAutoCooldowns();
+    markAutoModelUnavailable("codex", "gpt-6.1-sol", now + 1000);
+    expect(isAutoModelUnavailable("codex", "gpt-6.1-sol", now + 999)).toBe(true);
+    expect(isAutoModelUnavailable("codex", "gpt-6-luna", now + 999)).toBe(false);
+    expect(isAutoCoolingDown("codex", now + 999)).toBe(false);
+    expect(isAutoModelUnavailable("codex", "gpt-6.1-sol", now + 1000)).toBe(false);
+  });
+
   it("benches an instance until the time passes", () => {
     clearAutoCooldowns();
     markAutoCooldown("claudeAuto", now + 1000);
