@@ -414,6 +414,33 @@ describe("resolveAutoModelSelection", () => {
     expect(routeTo([noReport])).toBe("claudeAutoB");
   });
 
+  it("treats a Grok subscription window with no reading as unknown, not 0% used", () => {
+    // The credits endpoint omits creditUsagePercent on unified billing and currently turns that
+    // into a fabricated 0% (fixed in the reader separately). A missing reading is unknown here.
+    const grok = (id: string, usedPercent?: number) =>
+      ({
+        ...claude(id, 0, false),
+        driver: ProviderDriverKind.make("grok"),
+        models: [{ slug: "grok-4.7", name: "Grok 4.7", isCustom: false, capabilities: null }],
+        usageLimits: {
+          windows: [
+            {
+              id: "subscription",
+              kind: "weekly",
+              label: "Weekly",
+              ...(usedPercent === undefined ? {} : { usedPercent }),
+              resetsAt: inHours(100),
+              windowDurationMins: 10_080,
+            },
+          ],
+        },
+      }) as unknown as ServerProvider;
+    expect(routeTo([grok("grokUnknown"), grok("grokKnown", 30)])).toBe("grokKnown");
+    expect(routeTo([grok("grokKnown", 30), grok("grokUnknown")])).toBe("grokKnown");
+    expect(routeTo([grok("grokUnknown"), grok("grokFull", 95)])).toBe("grokUnknown");
+    expect(routeTo([grok("grokFull", 95), grok("grokUnknown")])).toBe("grokUnknown");
+  });
+
   it("ranks an account with no session window after one with a known session", () => {
     const noSession = {
       ...claude("claudeAutoB", 0),
@@ -467,6 +494,29 @@ describe("resolveAutoModelSelection", () => {
     };
     expect(
       resolveAutoModelSelection({ selection: auto(), providers: [grok, openCode], now, current }),
+    ).toMatchObject({ sticky: true, selection: { instanceId: "openCode" } });
+
+    const grokNoReading = {
+      ...grok,
+      usageLimits: {
+        windows: [
+          {
+            id: "subscription",
+            kind: "weekly",
+            label: "Weekly",
+            resetsAt: inHours(100),
+            windowDurationMins: 10_080,
+          },
+        ],
+      },
+    } as unknown as ServerProvider;
+    expect(
+      resolveAutoModelSelection({
+        selection: auto(),
+        providers: [grokNoReading, openCode],
+        now,
+        current,
+      }),
     ).toMatchObject({ sticky: true, selection: { instanceId: "openCode" } });
   });
 

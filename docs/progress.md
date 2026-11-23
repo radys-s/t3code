@@ -154,3 +154,12 @@
 - What worked: real run on dev server seeded from read-only live data (`.t3/userdata`), where Auto Low cleanly dispatched and answered "Auto (low)\n\nOK" on Claude Sonnet 5.5.
 - Review: own review plus a read-only review on the second Claude account. Fixed, each with a failing assertion first: `monthly_spend` counted again once plan windows passed 90%, and at 100% it blocked an account whose plan had room. Removed dead code: the contract requires `usedPercent`, and Grok's missing percentage is a real 0%, so "a window without `usedPercent`" cannot happen; the tests now use reachable unknown cases. Reverted an unrequested change that dropped expired weekly windows from the pace. Open: providers that never report a window for the model (OpenCode free models, no-usage providers) are always unknown, so a thread that fell back below them never returns through `betterHasRoom`; and an account whose windows have all reset reads as unknown until the next probe.
 - Next: Tomáš merges the PR, then switches the hubs to the new build.
+
+## 2026-11-23: Auto treats a missing Grok reading as unknown, not 0%
+
+- What: a window with no `usedPercent` now counts as unknown in Auto: it never wins a tie over a known reading, never pulls a sticky thread back, and still ranks ahead of accounts whose known peak is past 90%. A known window past 90% stays decisive even when a sibling window has no reading. Weekly pace skips windows without a reading rather than computing with NaN.
+- Why: the earlier review dismissed a missing reading as impossible because the contract requires `usedPercent`, but the maintainer's evidence is that Grok's endpoint hardcodes `?format=credits`; on a unified-billing subscription that response has no `creditUsagePercent`, and `packages/provider-grok/src/server/usageLimits.ts` synthesizes 0% from a weekly `currentPeriod`. That 0 is unknown, not empty. The truthful shape after the endpoint fix — a window with no reading — must not look fresh to Auto.
+- Numbers: the new Grok test fails on fork main (`42070732fb`) with all eight new cases (8 failed / 17 passed); with the fix, autoModel 25/25 and usageLimits 99/99 pass.
+- What worked: kept the reviewed monthly-spend and ranking changes and restored only missing-reading handling in `autoModel.ts`.
+- Open: until the Grok endpoint reader stops fabricating 0, that account still reads as a known 0% here; its reader fix is a separate task.
+- Next: file the PR, then Tomáš merges and switches the hubs to the new build.

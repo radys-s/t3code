@@ -160,20 +160,27 @@ const PACE_BAND = 0.15;
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
-/** Used % of each window that limits `model` and has not reset yet. */
+function isReading(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** Used % of each window that limits `model` and has not reset yet; a missing reading stays unknown. */
 function roomPercents(provider: ServerProvider, model: string, now: number, kind?: string) {
   return (provider.usageLimits?.windows ?? []).flatMap((w) =>
     usageWindowLimitsModel(provider, w, model) &&
     (kind === undefined || w.kind === kind) &&
     !(w.resetsAt && Date.parse(w.resetsAt) <= now)
-      ? [w.usedPercent]
+      ? [w.usedPercent as number | undefined]
       : [],
   );
 }
 
 function sessionUsedPercent(provider: ServerProvider, model: string, now: number) {
   const percents = roomPercents(provider, model, now, "session");
-  return percents.length > 0 ? Math.max(...percents) : undefined;
+  const readings = percents.filter(isReading);
+  return readings.length > 0 && readings.length === percents.length
+    ? Math.max(...readings)
+    : undefined;
 }
 
 /**
@@ -183,7 +190,12 @@ function sessionUsedPercent(provider: ServerProvider, model: string, now: number
  */
 function weeklyWindows(provider: ServerProvider, model: string, now: number) {
   return (provider.usageLimits?.windows ?? []).flatMap((w) => {
-    if (w.kind !== "weekly" || !usageWindowLimitsModel(provider, w, model)) return [];
+    if (
+      w.kind !== "weekly" ||
+      !isReading(w.usedPercent) ||
+      !usageWindowLimitsModel(provider, w, model)
+    )
+      return [];
     const resetsAt =
       w.resetsAt === undefined
         ? now + (w.windowDurationMins ?? Number.NaN) * MINUTE
@@ -262,7 +274,13 @@ function hasRoom(provider: ServerProvider, model: string, now: number): boolean 
 /** Undefined when no window that limits `model` reports usage: unknown, not empty. */
 function peakUsedPercent(provider: ServerProvider, model: string, now: number) {
   const percents = roomPercents(provider, model, now);
-  return percents.length > 0 ? Math.max(...percents) : undefined;
+  const readings = percents.filter(isReading);
+  if (readings.length === 0) return undefined;
+  // A known window past 90% already decides the room check, even if another window is unknown.
+  if (readings.length < percents.length && Math.max(...readings) < STICKY_MAX_USED_PERCENT) {
+    return undefined;
+  }
+  return Math.max(...readings);
 }
 
 /**
