@@ -1369,6 +1369,40 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("ignores the generated compile cache in the Windows file-count budget", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        const cacheDir = path.join(fixture.packagedAppDir, "resources", "server-compile-cache");
+        yield* fs.makeDirectory(cacheDir, { recursive: true });
+        yield* fs.writeFileString(path.join(cacheDir, "manifest.json"), "{}");
+        for (let index = 1; index < 38; index += 1) {
+          yield* fs.writeFileString(
+            path.join(cacheDir, index.toString(16).padStart(8, "0")),
+            "cache",
+          );
+        }
+        const extraDir = path.join(fixture.packagedAppDir, "resources", "extra-payload");
+        yield* fs.makeDirectory(extraDir, { recursive: true });
+        // The fixture already has five files; reach the reported 67 non-cache files.
+        for (let index = 0; index < 62; index += 1) {
+          yield* fs.writeFileString(path.join(extraDir, `payload-${String(index)}`), "payload");
+        }
+
+        const result = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          appVersion: WINDOWS_PAYLOAD_FIXTURE_VERSION,
+        });
+
+        assert.equal(result.fileCount, 67);
+      }),
+    ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
   it.effect("rejects a Windows payload that regresses above the file-count budget", () =>
     Effect.scoped(
       Effect.gen(function* () {
