@@ -367,7 +367,7 @@ export function MachineBar() {
       className="fixed inset-x-0 top-(--workspace-topbar-height) z-30 hidden h-(--machine-bar-height) items-center gap-4 overflow-hidden bg-background px-3 text-2xs text-muted-foreground md:flex"
       data-machine-bar
     >
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2 overflow-hidden group-data-[sidebar-state=expanded]/sidebar-wrapper:w-[calc(var(--sidebar-width)-0.75rem)]">
         {chips.map((chip) => (
           <MachineChipButton key={chip.key} chip={chip} />
         ))}
