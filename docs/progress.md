@@ -393,3 +393,11 @@
 - Runtime: `vp run migrate-dev-db --base-dir .t3/verify --projects 3 --threads-per-project 3` copied the live database through a read-only attachment into 9.2 MB of scratch data (3 projects, 5 retained threads, 1065 events) and applied migrations 103-118, including upstream's new `118_WorkflowPools`. `vp run dev:server --home-dir .t3/verify --no-seed --port 13872` completed V2 recovery and answered HTTP 302; stopped only this task's two PIDs after checking their cwd and the port owner, and the port is free. No live database write, service restart or deployment. Expected warnings: no Rust resource monitor and a scratch home inside the repository.
 - What worked: a merge was smaller than the replay used for the last two syncs because only catalog text overlapped. Keeping the fork's replaced keys rather than both copies of the same sentence left the catalogs matching the source.
 - Next: Tomáš merges the PR, then decides deployment separately. Upstream's MCP tool-list context grows from 61914 to 62055 bytes (+141). Manifests and the lockfile changed, so deployment needs dependency installation; a server at migration 102 will apply 103-118. Neither hub is switched here.
+
+## 2026-11-25: Machine bar no longer runs across the sidebar edge
+
+- What: the machine chips now take the sidebar's width (`--sidebar-width` minus the bar's left padding) while the sidebar is expanded, so the Claude account chips and `Next →` start in the content area.
+- Why: Tomáš saw the strip under the T3 Code header look wrong in the Windows app: `A 100·12` ended on the sidebar divider. The bar is one full-width row over both columns, so a long machine name pushed the account chip across the sidebar edge.
+- Numbers: in the dev client with a 256 px sidebar and a long machine name, the account chip spanned 226–262 px across the edge at 256; it now spans 272–308 px.
+- What worked: one class on the chip container; the container clips rather than wraps, so many machines hide the overflow.
+- Next: if three or more machines clip in practice, let the chip row scroll or collapse to a count.
