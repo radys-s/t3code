@@ -28,6 +28,7 @@ import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -328,6 +329,15 @@ export function autoSettlementSettingsKey(
 }
 
 export const make = Effect.gen(function* () {
+  const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
+  const environmentId = yield* identity.getEnvironmentId;
+  // Local launches keep the ordinary thread's settlement policy; only remote tasks and
+  // subagents inherit immediate settlement when their work (or their parent's work) ends.
+  const settlesWithDelegator = (
+    thread: Pick<OrchestrationV2ThreadShell, "lineage" | "delegatedFrom">,
+  ) =>
+    thread.lineage.relationshipToParent === "subagent" ||
+    (thread.delegatedFrom != null && thread.delegatedFrom.environmentId !== environmentId);
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -381,17 +391,18 @@ export const make = Effect.gen(function* () {
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter(
       (thread) =>
-        (automaticSettlementEnabled || thread.lineage.relationshipToParent === "subagent") &&
+        (automaticSettlementEnabled || settlesWithDelegator(thread)) &&
         isAutoSettlementCandidate(thread, nowMs),
     );
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
     const settleThread = Effect.fnUntraced(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
-        if (thread.lineage.relationshipToParent === "subagent") {
+        if (settlesWithDelegator(thread)) {
           if (yield* terminals.hasActiveSubprocess({ threadId: thread.id })) return null;
-          // The store returns a subagent only once its parent is done, so it
-          // settles with the parent and never runs its own lookup.
+          // The store returns a subagent only once its parent is done, so it settles with the
+          // parent. A task delegated from a linked environment has no parent here, so it settles
+          // once its own work is done. Neither runs its own lookup.
           const uuid = yield* random.uuidV4();
           yield* orchestrator.dispatch({
             type: "thread.auto-settle",
@@ -445,7 +456,7 @@ export const make = Effect.gen(function* () {
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
       (thread) => {
-        if (thread.lineage.relationshipToParent === "subagent") return settleThread(thread, null);
+        if (settlesWithDelegator(thread)) return settleThread(thread, null);
         const projectSettings = resolveProjectSettings(settings, thread.projectId).settings;
         // Skip no-op decisions; actual settlement still reads fresh settings before dispatch.
         const settledAt = resolveAutoSettlementAt({

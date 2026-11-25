@@ -3,6 +3,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   GitManagerError,
   ProjectId,
   EventId,
@@ -49,6 +50,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
@@ -653,12 +655,12 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       ]);
       return yield* (
         options.pullRequestSummary?.(input, readOptions) ??
-          Effect.succeed(
-            makePullRequestSummary({
-              ...input,
-              state: "open",
-            }),
-          )
+        Effect.succeed(
+          makePullRequestSummary({
+            ...input,
+            state: "open",
+          }),
+        )
       );
     });
 
@@ -688,6 +690,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   });
 
   const layerDependencies = Layer.mergeAll(
+    Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity)({
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-here")),
+    }),
     Layer.mock(ProjectStore.ProjectStoreV2)({
       listShells: () => Ref.get(snapshots).pipe(Effect.map((snapshot) => snapshot.projects)),
       getShell: (projectId) =>
@@ -1280,6 +1285,65 @@ describe("ThreadSettlementServiceV2 worker", () => {
           ]);
           expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
           expect(yield* Ref.get(fixture.summaryCalls)).toEqual([]);
+        }).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(projectionStoreSql)),
+  );
+
+  it.effect(
+    "settles a finished task delegated from a linked environment, which has no parent here",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const delegated: OrchestrationV2AppThread = {
+          ...appThread("delegated-here", null),
+          branch: "feature",
+          delegatedFrom: {
+            environmentId: EnvironmentId.make("environment-elsewhere"),
+            threadId: ThreadId.make("parent-elsewhere"),
+            title: "Parent",
+          },
+        };
+        const ordinary = { ...appThread("ordinary", null), branch: "feature" };
+        const launched = {
+          ...delegated,
+          id: ThreadId.make("launched-here"),
+          delegatedFrom: {
+            threadId: ThreadId.make("parent-here"),
+            title: "Parent",
+            environmentId: EnvironmentId.make("environment-here"),
+          },
+        };
+        for (const thread of [delegated, ordinary, launched]) {
+          yield* store.apply({
+            type: "thread.created",
+            id: EventId.make(`created:${thread.id}`),
+            threadId: thread.id,
+            occurredAt: thread.createdAt,
+            payload: thread,
+          });
+        }
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          projections: store,
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+          },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* service.drain;
+          expect(yield* Ref.get(fixture.commands)).toEqual([
+            expect.objectContaining({
+              type: "thread.auto-settle",
+              threadId: delegated.id,
+              snapshotAt: delegated.updatedAt,
+            }),
+          ]);
+          expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
         }).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(projectionStoreSql)),
   );
