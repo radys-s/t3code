@@ -50,16 +50,6 @@ export function usageWindowLimitsModel(
           .replace(/[^a-z0-9]+/g, "_")
           .includes(window.id.slice("seven_day_".length))
       );
-    case "antigravity": {
-      const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
-      const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
-      return (
-        pool === undefined ||
-        family === undefined ||
-        pool === family ||
-        (pool === "3p" && (family === "claude" || family === "gpt"))
-      );
-    }
     case "codex":
       // Seat-based plans spend credits only past their plan windows, so the credit cap blocks only plans without them.
       return (
