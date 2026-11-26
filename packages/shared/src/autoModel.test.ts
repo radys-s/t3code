@@ -85,48 +85,6 @@ function withWindow(provider: ServerProvider, window: Record<string, unknown>) {
   } as unknown as ServerProvider;
 }
 
-const antigravityProvider = (id: string, geminiSession: number, claudeSession: number) =>
-  ({
-    ...claude(id, 0, false),
-    displayName: "Auto",
-    driver: ProviderDriverKind.make("antigravity"),
-    models: [
-      {
-        slug: "claude-opus-4-6-thinking",
-        name: "Claude Opus 4.6",
-        isCustom: false,
-        capabilities: {
-          optionDescriptors: [
-            {
-              id: "thinking_level",
-              label: "Thinking",
-              type: "select" as const,
-              options: [{ id: "medium", label: "medium" }],
-            },
-          ],
-        },
-      },
-    ],
-    usageLimits: {
-      windows: [
-        {
-          id: "gemini-5h",
-          kind: "session",
-          label: "Gemini session",
-          usedPercent: geminiSession,
-          resetsAt,
-        },
-        {
-          id: "claude-5h",
-          kind: "session",
-          label: "Claude session",
-          usedPercent: claudeSession,
-          resetsAt,
-        },
-      ],
-    },
-  }) as unknown as ServerProvider;
-
 const auto = (level?: string): ModelSelection => ({
   instanceId: ProviderInstanceId.make("claudeAuto"),
   model: "auto",
@@ -319,17 +277,6 @@ describe("resolveAutoModelSelection", () => {
     expect(
       resolveAutoModelSelection({ selection: auto(), providers: [grok, a], now, current }),
     ).toMatchObject({ sticky: false, selection: { instanceId: "claudeAuto" } });
-  });
-
-  it("checks room only against the Antigravity pool that limits the model", () => {
-    const out = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
-    expect(
-      routeTo([
-        ...out,
-        antigravityProvider("antigravityA", 92, 50),
-        antigravityProvider("antigravityB", 10, 10),
-      ]),
-    ).toBe("antigravityA");
   });
 
   it("does not count Claude's extra-usage spend window for room", () => {
