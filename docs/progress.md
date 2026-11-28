@@ -419,3 +419,14 @@ Both Hydrogen pools were on server cooldown, but the picker preview used only
 client-visible provider snapshots and still named Hydrogen. Auto now omits speculative
 Antigravity destinations from the picker, machine bar and pending handoffs. The server
 still uses the persisted pool cooldowns and records the actual destination at dispatch.
+
+## 2026-11-28: Show Antigravity quota state in the Limits tab
+
+Antigravity reports no usage, so the Limits tab showed nothing for either account, not even
+that both Hydrogen pools are out until December 5. The server now adds display-only windows
+from Auto's own state to Antigravity providers sent to clients: "<pool> · out of quota" at
+100% until the benched pool resets, else "<pool> · Auto budget today (n/cap turns)" resetting
+at local midnight. Routing strips these windows (ids start with `auto-`), so the daily cap stays
+a soft preference; a test fails without that filter. Also fixed the Effect lint errors that
+`0832307` introduced in the server (node:fs/path imports), missed because the server package
+has no `typecheck` script; checked with `effect-tsgo` directly.

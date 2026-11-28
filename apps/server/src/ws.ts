@@ -7,6 +7,7 @@ import * as Context from "effect/Context";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import { withAutoBudgetWindows } from "./orchestration-v2/AutoCooldown.ts";
 import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
@@ -1884,7 +1885,11 @@ export const layerWsRpc = (
         readonly catalogDigests?: boolean;
       }) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
-        const currentProviders = yield* providerRegistry.getProviders;
+        // Antigravity reports no usage; the Limits tab shows Auto's quota state for it instead.
+        const currentProviders = withAutoBudgetWindows(
+          yield* providerRegistry.getProviders,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
         const commandProviders = options.usageLimitsCommand
           ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
           : currentProviders;
@@ -3617,6 +3622,11 @@ export const layerWsRpc = (
                 (providers, sources) =>
                   usageLimitsCommand ? withUsageLimitsCommands(providers, sources) : providers,
               ).pipe(
+                Stream.mapEffect((providers) =>
+                  Effect.map(DateTime.now, (now) =>
+                    withAutoBudgetWindows(providers, DateTime.toEpochMillis(now)),
+                  ),
+                ),
                 // Stripped before the de-dupe below, so snapshot-only changes send nothing.
                 Stream.mapEffect((commandProviders) =>
                   workspaceSnapshotsOnDemand

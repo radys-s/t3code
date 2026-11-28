@@ -141,6 +141,21 @@ export function autoQuotaPool(driver: string, model: string): string {
   return "*";
 }
 
+/** Windows the server derives from Auto's own state for display; routing skips them. */
+export const AUTO_WINDOW_ID_PREFIX = "auto-";
+
+function withoutAutoWindows(provider: ServerProvider): ServerProvider {
+  const windows = provider.usageLimits?.windows;
+  if (!windows?.some((w) => w.id.startsWith(AUTO_WINDOW_ID_PREFIX))) return provider;
+  return {
+    ...provider,
+    usageLimits: {
+      ...provider.usageLimits!,
+      windows: windows.filter((w) => !w.id.startsWith(AUTO_WINDOW_ID_PREFIX)),
+    },
+  };
+}
+
 /**
  * Turns per Antigravity account per day before Auto prefers other subscriptions. Antigravity
  * shows no usage, and the same accounts are used on other machines, so this keeps one session
@@ -519,12 +534,14 @@ export function resolveAutoModelSelection(
 ): AutoResolution | null {
   const level = autoLevelOf(input.selection);
   const tiers = AUTO_TIERS[level];
+  // Display-only windows come from Auto's own state, which `blocked` and `turnsToday` carry.
+  const providers = input.providers.map(withoutAutoWindows);
   const open = (provider: ServerProvider, model: string) =>
     usable(provider, model, input.now) &&
     !input.blocked?.(provider.instanceId, model, autoQuotaPool(provider.driver, model));
   const optionsIn = (tier: ReadonlyArray<AutoCandidate>, allowOverCap: boolean) =>
     tier.flatMap((candidate, order) =>
-      input.providers
+      providers
         .filter(
           (provider) =>
             provider.driver === (candidate.driver as ProviderDriverKind) &&
@@ -536,7 +553,7 @@ export function resolveAutoModelSelection(
 
   const current = input.current;
   if (current && !isAutoModelSlug(current.model)) {
-    const provider = input.providers.find((entry) => entry.instanceId === current.instanceId);
+    const provider = providers.find((entry) => entry.instanceId === current.instanceId);
     const tierIndex = tiers.findIndex((tier) =>
       tier.some((entry) => entry.driver === provider?.driver && entry.model === current.model),
     );

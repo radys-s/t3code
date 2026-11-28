@@ -986,6 +986,48 @@ describe("resolveAutoModelSelection", () => {
       expect(reversed).toEqual(forward);
     });
 
+    it("ignores the display-only Auto windows when it routes", () => {
+      // The server adds an "auto-budget" window at 100% once the cap is reached; routing must
+      // still use the pool as the last resort instead of treating it as exhausted.
+      const full = (p: ServerProvider) =>
+        ({
+          ...p,
+          usageLimits: {
+            checkedAt: inHours(0),
+            windows: [
+              {
+                id: "auto-budget-gemini-pro",
+                kind: "other",
+                label: "Hydrogen",
+                usedPercent: 100,
+                modelIds: ["gemini-4-hydrogen"],
+              },
+              {
+                id: "auto-budget-claude-4-6",
+                kind: "other",
+                label: "Claude",
+                usedPercent: 100,
+                modelIds: ["claude-opus-4-6-thinking"],
+              },
+            ],
+          },
+        }) as unknown as ServerProvider;
+      const capped = {
+        "agyA|gemini-pro": cap,
+        "agyB|gemini-pro": cap,
+        "agyA|claude-4-6": AUTO_DAILY_TURN_CAPS["claude-4-6"]!,
+        "agyB|claude-4-6": AUTO_DAILY_TURN_CAPS["claude-4-6"]!,
+      };
+      expect(
+        resolveAutoModelSelection({
+          selection: auto("medium"),
+          providers: [...claudeOut, full(account("agyA")), full(account("agyB"))],
+          now,
+          turnsToday: (id, pool) => capped[`${id}|${pool}` as keyof typeof capped] ?? 0,
+        })?.selection.model,
+      ).toBe("gemini-4-hydrogen");
+    });
+
     it("benches only the quota pool that ran out", () => {
       const hydrogenOut = (_id: string, _model: string, pool: string) => pool === "gemini-pro";
       expect(route({}, hydrogenOut)?.model).toBe("claude-opus-4-6-thinking");

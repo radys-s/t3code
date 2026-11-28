@@ -1,7 +1,15 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Auto routing state is read and saved synchronously from plain functions called inside the router.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { localDayStartMs } from "@t3tools/shared/autoModel";
+import type { ServerProvider, ServerProviderUsageWindow } from "@t3tools/contracts";
+import {
+  AUTO_DAILY_TURN_CAPS,
+  AUTO_WINDOW_ID_PREFIX,
+  autoQuotaPool,
+  localDayStartMs,
+} from "@t3tools/shared/autoModel";
+import * as DateTime from "effect/DateTime";
 
 /**
  * What usage reports cannot tell Auto: pools that just hit a limit (cooldowns) and today's turns
@@ -103,6 +111,87 @@ export function autoTurnsToday(instanceId: string, pool: string, nowMs: number):
   let count = 0;
   for (const turn of turns) if (turn.key === k && turn.at >= dayStart) count += 1;
   return count;
+}
+
+const POOL_LABELS: Readonly<Record<string, string>> = {
+  "gemini-pro": "Hydrogen",
+  "claude-4-6": "Claude 4.6",
+  "gemini-flash": "Flash",
+  "gpt-oss": "GPT-OSS",
+};
+
+const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+
+/** Until when `pool` of `instanceId` is benched, or undefined. */
+function cooldownUntil(instanceId: string, pool: string, nowMs: number): number | undefined {
+  const until = Math.max(
+    cooldowns.get(key(instanceId, pool)) ?? 0,
+    cooldowns.get(key(instanceId, "*")) ?? 0,
+  );
+  return until > nowMs ? until : undefined;
+}
+
+/**
+ * Antigravity reports no usage, so the Limits tab showed nothing for it. These windows show
+ * what Auto knows instead: a pool out of quota until its reset, or today's turns against the
+ * daily budget. Informational only: ids start with `AUTO_WINDOW_ID_PREFIX`, which routing skips.
+ */
+function autoBudgetWindows(provider: ServerProvider, nowMs: number): ServerProviderUsageWindow[] {
+  const tomorrow = localDayStartMs(nowMs) + 24 * 60 * 60_000;
+  return Object.entries(AUTO_DAILY_TURN_CAPS).flatMap(([pool, cap]) => {
+    const modelIds = provider.models
+      .map((model) => model.slug)
+      .filter((slug) => autoQuotaPool(provider.driver, slug) === pool);
+    if (modelIds.length === 0) return [];
+    const label = POOL_LABELS[pool] ?? pool;
+    const out = cooldownUntil(provider.instanceId, pool, nowMs);
+    if (out !== undefined) {
+      return [
+        {
+          id: `${AUTO_WINDOW_ID_PREFIX}quota-${pool}`,
+          kind: "other" as const,
+          label: `${label} · out of quota`,
+          modelIds,
+          usedPercent: 100,
+          resetsAt: iso(out),
+        },
+      ];
+    }
+    const turns = autoTurnsToday(provider.instanceId, pool, nowMs);
+    return [
+      {
+        id: `${AUTO_WINDOW_ID_PREFIX}budget-${pool}`,
+        kind: "other" as const,
+        label: `${label} · Auto budget today (${turns}/${cap} turns)`,
+        modelIds,
+        usedPercent: Math.min(100, Math.round((turns / cap) * 100)),
+        resetsAt: iso(tomorrow),
+      },
+    ];
+  });
+}
+
+/** Adds the Auto windows to Antigravity providers for clients (the Limits tab). */
+export function withAutoBudgetWindows(
+  providers: ReadonlyArray<ServerProvider>,
+  nowMs: number,
+): ReadonlyArray<ServerProvider> {
+  return providers.map((provider) => {
+    if (provider.driver !== "antigravity") return provider;
+    const windows = autoBudgetWindows(provider, nowMs);
+    if (windows.length === 0) return provider;
+    const own = (provider.usageLimits?.windows ?? []).filter(
+      (w) => !w.id.startsWith(AUTO_WINDOW_ID_PREFIX),
+    );
+    return {
+      ...provider,
+      usageLimits: {
+        ...provider.usageLimits,
+        checkedAt: provider.usageLimits?.checkedAt ?? iso(nowMs),
+        windows: [...own, ...windows],
+      },
+    };
+  });
 }
 
 /** Tests only. */

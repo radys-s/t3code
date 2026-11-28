@@ -1,5 +1,3 @@
-import * as NodePath from "node:path";
-
 import {
   CommandId,
   isDelegatedAppThread,
@@ -15,6 +13,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
@@ -146,8 +145,9 @@ export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const path = yield* Path.Path;
   configureAutoRoutingState(
-    NodePath.join(stateDir, "auto-routing.json"),
+    path.join(stateDir, "auto-routing.json"),
     DateTime.toEpochMillis(yield* DateTime.now),
   );
   const history = new Map<ThreadId, Array<number>>();

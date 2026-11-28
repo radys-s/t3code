@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Exercises the routing state file through a real temp directory.
 import {
   ProviderInstanceId,
   RunId,
@@ -8,6 +9,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -17,6 +19,7 @@ import {
   isAutoCoolingDown,
   markAutoCooldown,
   recordAutoTurn,
+  withAutoBudgetWindows,
 } from "./AutoCooldown.ts";
 import { admitFailover, autoFailoverPlan, MAX_FAILOVERS_PER_HOUR } from "./AutoFailoverService.ts";
 
@@ -225,5 +228,43 @@ describe("AutoCooldown", () => {
       clearAutoCooldowns();
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("shows Antigravity quota state as Limits windows, and leaves other providers alone", () => {
+    clearAutoCooldowns();
+    const agy = (id: string) =>
+      ({
+        instanceId: id,
+        driver: "antigravity",
+        models: [{ slug: "gemini-4-hydrogen" }, { slug: "claude-opus-4-6-thinking" }],
+        usageLimits: undefined,
+      }) as unknown as Parameters<typeof withAutoBudgetWindows>[0][number];
+    const claudeA = {
+      instanceId: "claudeAuto",
+      driver: "claudeAgent",
+      models: [{ slug: "claude-opus-5-5" }],
+    } as unknown as Parameters<typeof withAutoBudgetWindows>[0][number];
+    markAutoCooldown("agyB", now + 3_600_000, "gemini-pro");
+    recordAutoTurn("agyA", "gemini-pro", now);
+    recordAutoTurn("agyA", "gemini-pro", now);
+
+    const [a, b, c] = withAutoBudgetWindows([agy("agyA"), agy("agyB"), claudeA], now);
+    const byId = (p: typeof a) =>
+      Object.fromEntries((p!.usageLimits?.windows ?? []).map((w) => [w.id, w]));
+    expect(byId(a)["auto-budget-gemini-pro"]).toMatchObject({
+      usedPercent: 25,
+      label: "Hydrogen · Auto budget today (2/8 turns)",
+      modelIds: ["gemini-4-hydrogen"],
+    });
+    expect(byId(b)["auto-quota-gemini-pro"]).toMatchObject({
+      usedPercent: 100,
+      label: "Hydrogen · out of quota",
+      resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + 3_600_000)),
+    });
+    expect(byId(b)["auto-budget-claude-4-6"]?.usedPercent).toBe(0);
+    expect(c).toBe(claudeA);
+    // Applying it twice replaces the Auto windows instead of stacking them.
+    const again = withAutoBudgetWindows(withAutoBudgetWindows([agy("agyA")], now), now);
+    expect(again[0]!.usageLimits?.windows).toHaveLength(2);
   });
 });
