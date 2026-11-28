@@ -1,3 +1,5 @@
+import * as NodePath from "node:path";
+
 import {
   CommandId,
   isDelegatedAppThread,
@@ -7,16 +9,19 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { routedAutoLevel } from "@t3tools/shared/autoModel";
+import { autoQuotaPool, routedAutoLevel } from "@t3tools/shared/autoModel";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { markAutoCooldown } from "./AutoCooldown.ts";
+import * as ServerConfig from "../config.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { configureAutoRoutingState, markAutoCooldown } from "./AutoCooldown.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 /** Failures that mean "this account has no room right now", besides the usage_limit class. */
@@ -45,6 +50,8 @@ const AUTO_FAILOVER_TEXT =
 export interface AutoFailoverPlan {
   readonly failedInstanceId: string;
   readonly cooldownUntilMs: number;
+  /** A usage limit on one model's quota (not no capacity, not a lapsed plan). */
+  readonly modelLimit: boolean;
   readonly command: Extract<
     Parameters<Orchestrator.OrchestratorV2Shape["dispatch"]>[0],
     { readonly type: "message.dispatch" }
@@ -95,6 +102,7 @@ export function autoFailoverPlan(input: {
   return {
     failedInstanceId: input.failedInstanceId,
     cooldownUntilMs,
+    modelLimit: shell.lastErrorClass === "usage_limit",
     command: {
       type: "message.dispatch",
       // One failover per failed run, even across duplicate events.
@@ -136,10 +144,16 @@ export function admitFailover(history: Array<number>, nowMs: number): boolean {
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const { stateDir } = yield* ServerConfig.ServerConfig;
+  const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  configureAutoRoutingState(
+    NodePath.join(stateDir, "auto-routing.json"),
+    DateTime.toEpochMillis(yield* DateTime.now),
+  );
   const history = new Map<ThreadId, Array<number>>();
 
   const failOver = Effect.fn("AutoFailoverService.failOver")(
-    function* (threadId: ThreadId, runId: RunId, failedInstanceId: string) {
+    function* (threadId: ThreadId, runId: RunId, failedInstanceId: string, failedModel: string) {
       yield* Effect.sleep(Duration.millis(SETTLE_DELAY_MS));
       const shell = yield* orchestrator.getThreadShell(threadId);
       if (shell === null) return;
@@ -147,7 +161,12 @@ export const make = Effect.gen(function* () {
       const plan = autoFailoverPlan({ shell, runId, failedInstanceId, nowMs });
       if (plan === null) return;
       // Bench the instance either way, so the next message the user sends routes around it.
-      markAutoCooldown(plan.failedInstanceId, plan.cooldownUntilMs);
+      // A usage limit on Antigravity benches only that model's pool (Hydrogen running out leaves
+      // its Claude and Flash models usable); anything else benches the whole instance.
+      const providers = Option.isSome(registry) ? yield* registry.value.getProviders : [];
+      const driver = providers.find((p) => p.instanceId === plan.failedInstanceId)?.driver;
+      const pool = plan.modelLimit && driver ? autoQuotaPool(driver, failedModel) : "*";
+      markAutoCooldown(plan.failedInstanceId, plan.cooldownUntilMs, pool);
       // The same switch as resuming at reset: off means T3 sends nothing on its own.
       if (!(yield* settings.getSettings).autoResumeLimitedThreads) return;
       const threadHistory = history.get(threadId) ?? [];
@@ -183,7 +202,12 @@ export const make = Effect.gen(function* () {
           ? FiberMap.run(
               pending,
               event.threadId,
-              failOver(event.threadId, event.payload.id, event.payload.providerInstanceId),
+              failOver(
+                event.threadId,
+                event.payload.id,
+                event.payload.providerInstanceId,
+                event.payload.modelSelection.model,
+              ),
             )
           : Effect.void,
       ),

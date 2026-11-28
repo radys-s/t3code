@@ -8,8 +8,10 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  AUTO_DAILY_TURN_CAPS,
   AUTO_LEVEL_MODELS,
   autoLevelSelection,
+  autoQuotaPool,
   isAutoModelSelection,
   isAutoModelSlug,
   resolveAutoModelSelection,
@@ -511,7 +513,7 @@ describe("resolveAutoModelSelection", () => {
     ).toBeNull();
   });
 
-  it("after Claude, spends ChatGPT Plus ahead of Claude on Antigravity, then Grok, then Gemini", () => {
+  it("routes ChatGPT models by tier against Antigravity, Gemini Flash, Grok and the free models", () => {
     const other = (
       id: string,
       driver: string,
@@ -568,7 +570,11 @@ describe("resolveAutoModelSelection", () => {
       ],
     });
     expect(pick("high", without("gpt-6.2-astra"))?.model).toBe("gpt-6-astra");
-    expect(pick("high", without("gpt-6.2-astra", "gpt-6-astra"))?.model).toBe("gpt-6.2-sol");
+    // Sol shares its tier with Antigravity Opus 4.6; this Codex reports no usage, so the
+    // Antigravity pool under its daily budget wins. With usage reported, budgets decide.
+    expect(pick("high", without("gpt-6.2-astra", "gpt-6-astra"))?.model).toBe(
+      "claude-opus-4-6-thinking",
+    );
     expect(pick("medium", plus)).toMatchObject({
       instanceId: "codex",
       model: "gpt-6.2-sol",
@@ -577,8 +583,9 @@ describe("resolveAutoModelSelection", () => {
         { id: "auto", value: "medium" },
       ],
     });
-    expect(pick("medium", without("gpt-6.2-sol"))?.model).toBe("gpt-6.1-sol");
-    // Low reaches ChatGPT only after the free models, none of which are listed here.
+    // GPT-6.1 Sol shares the next tier with Antigravity Opus 4.6, which wins on its daily budget.
+    expect(pick("medium", without("gpt-6.2-sol"))?.model).toBe("claude-opus-4-6-thinking");
+    // Low starts with Luna (Claude is out here).
     expect(pick("low", plus)).toMatchObject({
       instanceId: "codex",
       model: "gpt-6-luna",
@@ -614,6 +621,14 @@ describe("resolveAutoModelSelection", () => {
           ],
           now,
         })?.selection.instanceId,
+      ).toBe("codex");
+      // Low starts with Sonnet 5.5 or Luna; Antigravity and the free models come after.
+      expect(
+        resolveAutoModelSelection({
+          selection: auto("low"),
+          providers: [other(id, driver, model, option)],
+          now,
+        })?.selection.instanceId,
       ).toBe(id);
     }
 
@@ -623,7 +638,9 @@ describe("resolveAutoModelSelection", () => {
     const route = (providers: ServerProvider[]) =>
       resolveAutoModelSelection({ selection: auto("high"), providers, now })?.selection;
 
-    expect(route([...claudeOut, gemini, grok, codex])?.instanceId).toBe("grok");
+    // Gemini Flash outranks Grok at high (Grok failed the hard test in MODELS.md).
+    expect(route([...claudeOut, gemini, grok, codex])?.instanceId).toBe("antigravity");
+    expect(route([...claudeOut, grok, codex])?.instanceId).toBe("grok");
     expect(route([...claudeOut, gemini])).toMatchObject({
       instanceId: "antigravity",
       model: "gemini-3.8-flash",
@@ -634,7 +651,7 @@ describe("resolveAutoModelSelection", () => {
     });
   });
 
-  it("prefers Antigravity Hydrogen at level effort before Antigravity Claude, then falls back to DeepSeek/OpenCode even at high", () => {
+  it("prefers Antigravity Hydrogen at each tier's effort before Antigravity Claude, then falls back to DeepSeek/OpenCode even at high", () => {
     const agyModel = (
       slug: string,
       optionId: string,
@@ -709,8 +726,11 @@ describe("resolveAutoModelSelection", () => {
     } as unknown as ServerProvider;
     const claudeOut = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
 
-    // Hydrogen is chosen first at each level's effort.
-    for (const level of ["high", "medium", "low"] as const) {
+    // Hydrogen goes first at high (xhigh) and medium (high) once Claude is out.
+    for (const [level, effort] of [
+      ["high", "xhigh"],
+      ["medium", "high"],
+    ] as const) {
       expect(
         resolveAutoModelSelection({
           selection: auto(level),
@@ -721,11 +741,33 @@ describe("resolveAutoModelSelection", () => {
         instanceId: "antigravity",
         model: "gemini-4-hydrogen",
         options: [
-          { id: "thought_level", value: level },
+          { id: "thought_level", value: effort },
           { id: "auto", value: level },
         ],
       });
     }
+    // Low saves Antigravity: the free models come first, then Hydrogen at low.
+    expect(
+      resolveAutoModelSelection({
+        selection: auto("low"),
+        providers: [...claudeOut, agy(10, 0), openCode],
+        now,
+      })?.selection?.model,
+    ).toBe("opencode/deepseek-v4.1-flash-free");
+    expect(
+      resolveAutoModelSelection({
+        selection: auto("low"),
+        providers: [...claudeOut, agy(10, 0)],
+        now,
+      })?.selection,
+    ).toMatchObject({
+      instanceId: "antigravity",
+      model: "gemini-4-hydrogen",
+      options: [
+        { id: "thought_level", value: "low" },
+        { id: "auto", value: "low" },
+      ],
+    });
 
     // Once Hydrogen is depleted, Antigravity Claude models take over.
     expect(
@@ -745,7 +787,7 @@ describe("resolveAutoModelSelection", () => {
     expect(
       resolveAutoModelSelection({
         selection: auto("low"),
-        providers: [...claudeOut, agy(100, 0), openCode],
+        providers: [...claudeOut, agy(100, 0)],
         now,
       })?.selection,
     ).toMatchObject({
@@ -874,5 +916,91 @@ describe("resolveAutoModelSelection", () => {
   it("returns null when nothing is usable", () => {
     const providers = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
     expect(resolveAutoModelSelection({ selection: auto(), providers, now })).toBeNull();
+  });
+
+  describe("two Antigravity accounts without usage reports", () => {
+    const thought = (slug: string) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "thought_level",
+            label: "Thought",
+            type: "select" as const,
+            options: ["low", "medium", "high", "xhigh"].map((id) => ({ id, label: id })),
+          },
+        ],
+      },
+    });
+    const account = (id: string) =>
+      ({
+        ...claude(id, 0, false),
+        driver: ProviderDriverKind.make("antigravity"),
+        models: [thought("gemini-4-hydrogen"), thought("claude-opus-4-6-thinking")],
+        usageLimits: undefined,
+      }) as unknown as ServerProvider;
+    const claudeOut = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
+    const providers = [...claudeOut, account("agyA"), account("agyB")];
+    const cap = AUTO_DAILY_TURN_CAPS["gemini-pro"]!;
+    const route = (
+      turns: Record<string, number>,
+      blocked?: (id: string, m: string, pool: string) => boolean,
+    ) =>
+      resolveAutoModelSelection({
+        selection: auto("medium"),
+        providers,
+        now,
+        turnsToday: (id, pool) => turns[`${id}|${pool}`] ?? 0,
+        ...(blocked ? { blocked } : {}),
+      })?.selection;
+
+    it("sends the turn to the account that spent less of its Hydrogen today", () => {
+      expect(route({ "agyA|gemini-pro": 5, "agyB|gemini-pro": 1 })?.instanceId).toBe("agyB");
+      expect(route({ "agyA|gemini-pro": 1, "agyB|gemini-pro": 5 })?.instanceId).toBe("agyA");
+    });
+
+    it("moves to the next tier when both accounts reach the daily Hydrogen cap", () => {
+      expect(route({ "agyA|gemini-pro": cap, "agyB|gemini-pro": cap })?.model).toBe(
+        "claude-opus-4-6-thinking",
+      );
+    });
+
+    it("still uses an account past its cap when nothing else is left", () => {
+      const capped = { "agyA|gemini-pro": cap, "agyB|gemini-pro": cap };
+      const claudeCap = AUTO_DAILY_TURN_CAPS["claude-4-6"]!;
+      const all = { ...capped, "agyA|claude-4-6": claudeCap, "agyB|claude-4-6": claudeCap };
+      expect(route(all)?.model).toBe("gemini-4-hydrogen");
+    });
+
+    it("picks the same route whatever order the providers are listed in", () => {
+      const turns = { "agyA|gemini-pro": 3, "agyB|gemini-pro": 2 };
+      const forward = route(turns);
+      const reversed = resolveAutoModelSelection({
+        selection: auto("medium"),
+        providers: [...providers].reverse(),
+        now,
+        turnsToday: (id, pool) => turns[`${id}|${pool}` as keyof typeof turns] ?? 0,
+      })?.selection;
+      expect(reversed).toEqual(forward);
+    });
+
+    it("benches only the quota pool that ran out", () => {
+      const hydrogenOut = (_id: string, _model: string, pool: string) => pool === "gemini-pro";
+      expect(route({}, hydrogenOut)?.model).toBe("claude-opus-4-6-thinking");
+    });
+  });
+
+  it("maps Antigravity models to their quota pools and other providers to the whole account", () => {
+    expect(autoQuotaPool("antigravity", "gemini-4-hydrogen")).toBe("gemini-pro");
+    expect(autoQuotaPool("antigravity", "gemini-3.8-flash")).toBe("gemini-flash");
+    expect(autoQuotaPool("antigravity", "claude-opus-4-6-thinking")).toBe("claude-4-6");
+    expect(autoQuotaPool("antigravity", "claude-sonnet-4-6")).toBe("claude-4-6");
+    expect(autoQuotaPool("antigravity", "gpt-oss-120b-medium")).toBe("gpt-oss");
+    // Claude Agent lists Opus 4.6 too, and a Claude limit covers the whole account.
+    expect(autoQuotaPool("claudeAgent", "claude-opus-4-6")).toBe("*");
+    expect(autoQuotaPool("claudeAgent", "claude-opus-5-5")).toBe("*");
+    expect(autoQuotaPool("codex", "gpt-6.2-sol")).toBe("*");
   });
 });

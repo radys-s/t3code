@@ -4,9 +4,20 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "vite-plus/test";
 
-import { clearAutoCooldowns, isAutoCoolingDown, markAutoCooldown } from "./AutoCooldown.ts";
+import {
+  autoTurnsToday,
+  clearAutoCooldowns,
+  configureAutoRoutingState,
+  isAutoCoolingDown,
+  markAutoCooldown,
+  recordAutoTurn,
+} from "./AutoCooldown.ts";
 import { admitFailover, autoFailoverPlan, MAX_FAILOVERS_PER_HOUR } from "./AutoFailoverService.ts";
 
 const now = Date.parse("2026-11-14T20:00:00.000Z");
@@ -80,6 +91,15 @@ describe("autoFailoverPlan", () => {
         "Claude Code can't use your Claude subscription, usually because a payment is past due · Pay or renew at https://claude.ai/settings/billing (if you just paid, try again shortly), or use an Anthropic API key instead",
     });
     expect(plan(lapsed)?.cooldownUntilMs).toBe(now + 30 * 60_000);
+    // A lapsed plan covers the whole account, not one model's quota.
+    expect(plan(lapsed)?.modelLimit).toBe(false);
+  });
+
+  it("marks only a usage limit as a per-model limit", () => {
+    expect(plan(shell())?.modelLimit).toBe(true);
+    expect(
+      plan(shell({ lastErrorClass: "provider_error", lastErrorCode: "UNAVAILABLE" }))?.modelLimit,
+    ).toBe(false);
   });
 
   it("moves a hand-picked thread to Auto at the level its model implies", () => {
@@ -156,8 +176,54 @@ describe("AutoCooldown", () => {
     clearAutoCooldowns();
     markAutoCooldown("claudeAuto", now + 1000);
     markAutoCooldown("claudeAuto", now + 500);
-    expect(isAutoCoolingDown("claudeAuto", now + 999)).toBe(true);
-    expect(isAutoCoolingDown("claudeAuto", now + 1000)).toBe(false);
-    expect(isAutoCoolingDown("claudeAutoB", now)).toBe(false);
+    expect(isAutoCoolingDown("claudeAuto", "*", now + 999)).toBe(true);
+    expect(isAutoCoolingDown("claudeAuto", "*", now + 1000)).toBe(false);
+    expect(isAutoCoolingDown("claudeAutoB", "*", now)).toBe(false);
+  });
+
+  it("benches only the Antigravity quota pool that ran out", () => {
+    clearAutoCooldowns();
+    markAutoCooldown("antigravity_2", now + 60_000, "gemini-pro");
+    expect(isAutoCoolingDown("antigravity_2", "gemini-pro", now)).toBe(true);
+    expect(isAutoCoolingDown("antigravity_2", "claude-4-6", now)).toBe(false);
+    expect(isAutoCoolingDown("antigravity_2", "gemini-flash", now)).toBe(false);
+    expect(isAutoCoolingDown("antigravity", "gemini-pro", now)).toBe(false);
+    // The whole-instance pool benches every pool of that instance.
+    markAutoCooldown("antigravity", now + 60_000);
+    expect(isAutoCoolingDown("antigravity", "gemini-flash", now)).toBe(true);
+  });
+
+  it("counts today's turns per instance and pool", () => {
+    clearAutoCooldowns();
+    const yesterday = now - 24 * 60 * 60_000;
+    recordAutoTurn("antigravity", "gemini-pro", yesterday);
+    recordAutoTurn("antigravity", "gemini-pro", now);
+    recordAutoTurn("antigravity", "gemini-pro", now);
+    recordAutoTurn("antigravity", "claude-4-6", now);
+    expect(autoTurnsToday("antigravity", "gemini-pro", now)).toBe(2);
+    expect(autoTurnsToday("antigravity", "claude-4-6", now)).toBe(1);
+    expect(autoTurnsToday("antigravity_2", "gemini-pro", now)).toBe(0);
+  });
+
+  it("keeps cooldowns and turns across a server restart", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "auto-routing-"));
+    const file = NodePath.join(dir, "auto-routing.json");
+    try {
+      clearAutoCooldowns();
+      configureAutoRoutingState(file, now);
+      markAutoCooldown("antigravity_2", now + 60_000, "gemini-pro");
+      recordAutoTurn("antigravity", "gemini-pro", now);
+      // A restart forgets memory; the file brings both back.
+      clearAutoCooldowns();
+      configureAutoRoutingState(file, now + 1000);
+      expect(isAutoCoolingDown("antigravity_2", "gemini-pro", now + 1000)).toBe(true);
+      expect(autoTurnsToday("antigravity", "gemini-pro", now + 1000)).toBe(1);
+      // Loading the same file again does not count its turns twice.
+      configureAutoRoutingState(file, now + 2000);
+      expect(autoTurnsToday("antigravity", "gemini-pro", now + 2000)).toBe(1);
+    } finally {
+      clearAutoCooldowns();
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

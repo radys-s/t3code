@@ -88,7 +88,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { isAutoModelSelection, resolveAutoModelSelection } from "@t3tools/shared/autoModel";
-import { isAutoCoolingDown } from "./AutoCooldown.ts";
+import { autoTurnsToday, isAutoCoolingDown, recordAutoTurn } from "./AutoCooldown.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import {
@@ -17729,7 +17729,9 @@ const withAutoModelRouting = Effect.fn("OrchestratorV2.withAutoModelRouting")(fu
     command: OrchestrationV2ServerCommand,
   ) {
     const selection = (command as { readonly modelSelection?: ModelSelection }).modelSelection;
-    if (!isAutoModelSelection(selection) || selection === undefined) return command;
+    if (!isAutoModelSelection(selection) || selection === undefined) {
+      return { command, turn: undefined };
+    }
     const threadId = (command as { readonly threadId?: ThreadId }).threadId;
     const current =
       threadId !== undefined && AUTO_STICKY_COMMANDS.has(command.type)
@@ -17742,7 +17744,8 @@ const withAutoModelRouting = Effect.fn("OrchestratorV2.withAutoModelRouting")(fu
       providers: Option.isSome(registry) ? yield* registry.value.getProviders : [],
       now,
       current,
-      blocked: (instanceId) => isAutoCoolingDown(instanceId, now),
+      blocked: (instanceId, _model, pool) => isAutoCoolingDown(instanceId, pool, now),
+      turnsToday: (instanceId, pool) => autoTurnsToday(instanceId, pool, now),
     });
     if (resolution === null) {
       return yield* new OrchestratorCommandRejectedError({
@@ -17760,10 +17763,30 @@ const withAutoModelRouting = Effect.fn("OrchestratorV2.withAutoModelRouting")(fu
       instanceId: resolution.selection.instanceId,
       model: resolution.selection.model,
     });
-    return { ...command, modelSelection: resolution.selection } as OrchestrationV2ServerCommand;
+    const routed = {
+      ...command,
+      modelSelection: resolution.selection,
+    } as OrchestrationV2ServerCommand;
+    // A turn counts once dispatched: the ledger behind Antigravity balancing and its budget.
+    const turn =
+      command.type === "message.dispatch"
+        ? { instanceId: resolution.selection.instanceId, pool: resolution.pool, now }
+        : undefined;
+    return { command: routed, turn };
   });
   return {
     ...orchestrator,
-    dispatch: (command) => resolve(command).pipe(Effect.flatMap(orchestrator.dispatch)),
+    dispatch: (command) =>
+      resolve(command).pipe(
+        Effect.flatMap(({ command: routed, turn }) =>
+          orchestrator.dispatch(routed).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                if (turn) recordAutoTurn(turn.instanceId, turn.pool, turn.now);
+              }),
+            ),
+          ),
+        ),
+      ),
   } satisfies OrchestratorV2Shape;
 });
