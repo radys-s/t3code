@@ -244,24 +244,24 @@ describe("AutoCooldown", () => {
       driver: "claudeAgent",
       models: [{ slug: "claude-opus-5-5" }],
     } as unknown as Parameters<typeof withAutoBudgetWindows>[0][number];
-    markAutoCooldown("agyB", now + 3_600_000, "gemini-pro");
-    recordAutoTurn("agyA", "gemini-pro", now);
-    recordAutoTurn("agyA", "gemini-pro", now);
+    markAutoCooldown("agyB", now + 3_600_000, "gemini");
+    recordAutoTurn("agyA", "gemini", now);
+    recordAutoTurn("agyA", "gemini", now);
 
     const [a, b, c] = withAutoBudgetWindows([agy("agyA"), agy("agyB"), claudeA], now);
     const byId = (p: typeof a) =>
       Object.fromEntries((p!.usageLimits?.windows ?? []).map((w) => [w.id, w]));
-    expect(byId(a)["auto-budget-gemini-pro"]).toMatchObject({
-      usedPercent: 25,
-      label: "Hydrogen · Auto budget today (2/8 turns)",
+    expect(byId(a)["auto-budget-gemini"]).toMatchObject({
+      usedPercent: 20,
+      label: "Gemini (Hydrogen, Flash) · Auto budget today (2/10 turns)",
       modelIds: ["gemini-4-hydrogen"],
     });
-    expect(byId(b)["auto-quota-gemini-pro"]).toMatchObject({
+    expect(byId(b)["auto-quota-gemini"]).toMatchObject({
       usedPercent: 100,
-      label: "Hydrogen · out of quota",
+      label: "Gemini (Hydrogen, Flash) · out of quota",
       resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now + 3_600_000)),
     });
-    expect(byId(b)["auto-budget-claude-4-6"]?.usedPercent).toBe(0);
+    expect(byId(b)["auto-budget-third-party"]?.usedPercent).toBe(0);
     expect(c).toBe(claudeA);
     // Applying it twice replaces the Auto windows instead of stacking them.
     const again = withAutoBudgetWindows(withAutoBudgetWindows([agy("agyA")], now), now);

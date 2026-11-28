@@ -912,7 +912,7 @@ describe("resolveAutoModelSelection", () => {
       }) as unknown as ServerProvider;
     const claudeOut = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
     const providers = [...claudeOut, account("agyA"), account("agyB")];
-    const cap = AUTO_DAILY_TURN_CAPS["gemini-pro"]!;
+    const cap = AUTO_DAILY_TURN_CAPS["gemini"]!;
     const route = (
       turns: Record<string, number>,
       blocked?: (id: string, m: string, pool: string) => boolean,
@@ -926,25 +926,25 @@ describe("resolveAutoModelSelection", () => {
       })?.selection;
 
     it("sends the turn to the account that spent less of its Hydrogen today", () => {
-      expect(route({ "agyA|gemini-pro": 5, "agyB|gemini-pro": 1 })?.instanceId).toBe("agyB");
-      expect(route({ "agyA|gemini-pro": 1, "agyB|gemini-pro": 5 })?.instanceId).toBe("agyA");
+      expect(route({ "agyA|gemini": 5, "agyB|gemini": 1 })?.instanceId).toBe("agyB");
+      expect(route({ "agyA|gemini": 1, "agyB|gemini": 5 })?.instanceId).toBe("agyA");
     });
 
     it("moves to the next tier when both accounts reach the daily Hydrogen cap", () => {
-      expect(route({ "agyA|gemini-pro": cap, "agyB|gemini-pro": cap })?.model).toBe(
+      expect(route({ "agyA|gemini": cap, "agyB|gemini": cap })?.model).toBe(
         "claude-opus-4-6-thinking",
       );
     });
 
     it("still uses an account past its cap when nothing else is left", () => {
-      const capped = { "agyA|gemini-pro": cap, "agyB|gemini-pro": cap };
-      const claudeCap = AUTO_DAILY_TURN_CAPS["claude-4-6"]!;
-      const all = { ...capped, "agyA|claude-4-6": claudeCap, "agyB|claude-4-6": claudeCap };
+      const capped = { "agyA|gemini": cap, "agyB|gemini": cap };
+      const claudeCap = AUTO_DAILY_TURN_CAPS["third-party"]!;
+      const all = { ...capped, "agyA|third-party": claudeCap, "agyB|third-party": claudeCap };
       expect(route(all)?.model).toBe("gemini-4-hydrogen");
     });
 
     it("picks the same route whatever order the providers are listed in", () => {
-      const turns = { "agyA|gemini-pro": 3, "agyB|gemini-pro": 2 };
+      const turns = { "agyA|gemini": 3, "agyB|gemini": 2 };
       const forward = route(turns);
       const reversed = resolveAutoModelSelection({
         selection: auto("medium"),
@@ -965,14 +965,14 @@ describe("resolveAutoModelSelection", () => {
             checkedAt: inHours(0),
             windows: [
               {
-                id: "auto-budget-gemini-pro",
+                id: "auto-budget-gemini",
                 kind: "other",
                 label: "Hydrogen",
                 usedPercent: 100,
                 modelIds: ["gemini-4-hydrogen"],
               },
               {
-                id: "auto-budget-claude-4-6",
+                id: "auto-budget-third-party",
                 kind: "other",
                 label: "Claude",
                 usedPercent: 100,
@@ -982,10 +982,10 @@ describe("resolveAutoModelSelection", () => {
           },
         }) as unknown as ServerProvider;
       const capped = {
-        "agyA|gemini-pro": cap,
-        "agyB|gemini-pro": cap,
-        "agyA|claude-4-6": AUTO_DAILY_TURN_CAPS["claude-4-6"]!,
-        "agyB|claude-4-6": AUTO_DAILY_TURN_CAPS["claude-4-6"]!,
+        "agyA|gemini": cap,
+        "agyB|gemini": cap,
+        "agyA|third-party": AUTO_DAILY_TURN_CAPS["third-party"]!,
+        "agyB|third-party": AUTO_DAILY_TURN_CAPS["third-party"]!,
       };
       expect(
         resolveAutoModelSelection({
@@ -998,17 +998,18 @@ describe("resolveAutoModelSelection", () => {
     });
 
     it("benches only the quota pool that ran out", () => {
-      const hydrogenOut = (_id: string, _model: string, pool: string) => pool === "gemini-pro";
+      const hydrogenOut = (_id: string, _model: string, pool: string) => pool === "gemini";
       expect(route({}, hydrogenOut)?.model).toBe("claude-opus-4-6-thinking");
     });
   });
 
   it("maps Antigravity models to their quota pools and other providers to the whole account", () => {
-    expect(autoQuotaPool("antigravity", "gemini-4-hydrogen")).toBe("gemini-pro");
-    expect(autoQuotaPool("antigravity", "gemini-3.8-flash")).toBe("gemini-flash");
-    expect(autoQuotaPool("antigravity", "claude-opus-4-6-thinking")).toBe("claude-4-6");
-    expect(autoQuotaPool("antigravity", "claude-sonnet-4-6")).toBe("claude-4-6");
-    expect(autoQuotaPool("antigravity", "gpt-oss-120b-medium")).toBe("gpt-oss");
+    // Hydrogen and Flash share one quota; Claude 4.6 and GPT-OSS share the third-party one.
+    expect(autoQuotaPool("antigravity", "gemini-4-hydrogen")).toBe("gemini");
+    expect(autoQuotaPool("antigravity", "gemini-3.8-flash")).toBe("gemini");
+    expect(autoQuotaPool("antigravity", "claude-opus-4-6-thinking")).toBe("third-party");
+    expect(autoQuotaPool("antigravity", "claude-sonnet-4-6")).toBe("third-party");
+    expect(autoQuotaPool("antigravity", "gpt-oss-120b-medium")).toBe("third-party");
     // Claude Agent lists Opus 4.6 too, and a Claude limit covers the whole account.
     expect(autoQuotaPool("claudeAgent", "claude-opus-4-6")).toBe("*");
     expect(autoQuotaPool("claudeAgent", "claude-opus-5-5")).toBe("*");

@@ -114,10 +114,8 @@ export function autoTurnsToday(instanceId: string, pool: string, nowMs: number):
 }
 
 const POOL_LABELS: Readonly<Record<string, string>> = {
-  "gemini-pro": "Hydrogen",
-  "claude-4-6": "Claude 4.6",
-  "gemini-flash": "Flash",
-  "gpt-oss": "GPT-OSS",
+  gemini: "Gemini (Hydrogen, Flash)",
+  "third-party": "Third-party (Claude 4.6, GPT-OSS)",
 };
 
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));

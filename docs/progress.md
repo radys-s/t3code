@@ -437,3 +437,13 @@ Auto could spend the shared free DeepSeek quota on the main thread and leave the
 on a depleted provider. Removed DeepSeek from all three Auto tiers while retaining
 explicit model selection and delegation. Moved the remaining Codex fallbacks ahead of
 free OpenCode in their respective tiers. Kept the Limits-tab and cooldown fixes in the build.
+
+## 2026-11-28: Antigravity has two quota pools, not four
+
+Tomáš saw "GPT-OSS 0/30 turns" in the Limits tab while Auto said Antigravity was out. A probe
+of every model on both accounts with `agy -p` showed the real metering: Hydrogen and Flash fail
+together ("Individual quota reached", resets in 158 h), GPT-OSS and the Claude 4.6 models
+together ("Third-party quota reached", resets in 150 h). Both accounts are out until about
+Dec 4-5. `autoQuotaPool` now maps Antigravity to `gemini` and `third-party` (daily budgets 10
+and 6), so one quota error benches the whole shared pool and the Limits tab no longer shows a
+fake free GPT-OSS pool. GPT-OSS joins the low, medium and high tiers.

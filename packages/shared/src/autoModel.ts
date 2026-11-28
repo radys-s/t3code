@@ -74,6 +74,7 @@ const AUTO_TIERS: Readonly<Record<AutoLevel, ReadonlyArray<ReadonlyArray<AutoCan
     ],
     [antigravity("gemini-3.8-flash", "high"), opencode("opencode/beam-free", "high")],
     [
+      antigravity("gpt-oss-120b-medium", ""),
       opencode("opencode/big-pickle", ""),
       opencode("opencode/mimo-v2.6-flash-free", ""),
       grok("high"),
@@ -94,7 +95,11 @@ const AUTO_TIERS: Readonly<Record<AutoLevel, ReadonlyArray<ReadonlyArray<AutoCan
       antigravity("claude-sonnet-4-6", "medium"),
     ],
     [codex("gpt-6-luna", "medium")],
-    [antigravity("gemini-3.8-flash", "high"), opencode("opencode/beam-free", "medium")],
+    [
+      antigravity("gemini-3.8-flash", "high"),
+      antigravity("gpt-oss-120b-medium", ""),
+      opencode("opencode/beam-free", "medium"),
+    ],
     [
       opencode("opencode/big-pickle", ""),
       opencode("opencode/mimo-v2.6-flash-free", ""),
@@ -112,6 +117,7 @@ const AUTO_TIERS: Readonly<Record<AutoLevel, ReadonlyArray<ReadonlyArray<AutoCan
     [
       antigravity("gemini-4-hydrogen", "low"),
       antigravity("gemini-3.8-flash", "low"),
+      antigravity("gpt-oss-120b-medium", ""),
       antigravity("claude-sonnet-4-6", "low"),
     ],
     [claude("claude-haiku-5-5", "low"), grok("low")],
@@ -119,17 +125,16 @@ const AUTO_TIERS: Readonly<Record<AutoLevel, ReadonlyArray<ReadonlyArray<AutoCan
 };
 
 /**
- * Antigravity meters each model family separately ("Individual quota reached" on Hydrogen
- * leaves its Claude and Flash models working), and reports no usage to T3. Other providers
- * meter the whole account; their pool is "*".
+ * Antigravity has two quota pools per account and reports no usage to T3: Gemini (Hydrogen,
+ * Flash) and third-party (Claude 4.6, GPT-OSS). Other providers meter the whole account: "*".
  */
 export function autoQuotaPool(driver: string, model: string): string {
   // Claude Agent also lists claude-*-4-6, and its limits cover the whole account.
   if (driver !== "antigravity") return "*";
-  if (/^gemini-[\d.]+-flash/.test(model)) return "gemini-flash";
-  if (/^gemini-/.test(model)) return "gemini-pro";
-  if (/^claude-.*-4-6/.test(model)) return "claude-4-6";
-  if (/^gpt-oss/.test(model)) return "gpt-oss";
+  // Measured 2026-11-28: Hydrogen and Flash fail together with "Individual quota reached";
+  // GPT-OSS and the Claude 4.6 models together with "Third-party quota reached".
+  if (/^gemini-/.test(model)) return "gemini";
+  if (/^claude-.*-4-6/.test(model) || /^gpt-oss/.test(model)) return "third-party";
   return "*";
 }
 
@@ -155,10 +160,8 @@ function withoutAutoWindows(provider: ServerProvider): ServerProvider {
  * the account is still used when nothing else is left.
  */
 export const AUTO_DAILY_TURN_CAPS: Readonly<Record<string, number>> = {
-  "gemini-pro": 8,
-  "claude-4-6": 4,
-  "gemini-flash": 30,
-  "gpt-oss": 30,
+  gemini: 10,
+  "third-party": 6,
 };
 
 /** The option IDs each driver uses for reasoning effort (first matching descriptor wins). */
