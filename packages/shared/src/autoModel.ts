@@ -72,11 +72,7 @@ const AUTO_TIERS: Readonly<Record<AutoLevel, ReadonlyArray<ReadonlyArray<AutoCan
       antigravity("claude-opus-4-6-thinking", "high"),
       claude("claude-sonnet-5-5", "high"),
     ],
-    [
-      antigravity("gemini-3.8-flash", "high"),
-      opencode("opencode/deepseek-v4.1-flash-free", "max"),
-      opencode("opencode/beam-free", "high"),
-    ],
+    [antigravity("gemini-3.8-flash", "high"), opencode("opencode/beam-free", "high")],
     [
       opencode("opencode/big-pickle", ""),
       opencode("opencode/mimo-v2.6-flash-free", ""),
@@ -97,22 +93,18 @@ const AUTO_TIERS: Readonly<Record<AutoLevel, ReadonlyArray<ReadonlyArray<AutoCan
       antigravity("claude-opus-4-6-thinking", "medium"),
       antigravity("claude-sonnet-4-6", "medium"),
     ],
-    [
-      antigravity("gemini-3.8-flash", "high"),
-      opencode("opencode/deepseek-v4.1-flash-free", "high"),
-      opencode("opencode/beam-free", "medium"),
-    ],
+    [codex("gpt-6-luna", "medium")],
+    [antigravity("gemini-3.8-flash", "high"), opencode("opencode/beam-free", "medium")],
     [
       opencode("opencode/big-pickle", ""),
       opencode("opencode/mimo-v2.6-flash-free", ""),
-      codex("gpt-6-luna", "medium"),
       grok("medium"),
     ],
   ],
   low: [
     [claude("claude-sonnet-5-5", "low"), codex("gpt-6-luna", "low")],
+    [codex("gpt-6.1-terra", "low")],
     [
-      opencode("opencode/deepseek-v4.1-flash-free", "low"),
       opencode("opencode/beam-free", "low"),
       opencode("opencode/big-pickle", ""),
       opencode("opencode/mimo-v2.6-flash-free", ""),
@@ -122,7 +114,7 @@ const AUTO_TIERS: Readonly<Record<AutoLevel, ReadonlyArray<ReadonlyArray<AutoCan
       antigravity("gemini-3.8-flash", "low"),
       antigravity("claude-sonnet-4-6", "low"),
     ],
-    [claude("claude-haiku-5-5", "low"), codex("gpt-6.1-terra", "low"), grok("low")],
+    [claude("claude-haiku-5-5", "low"), grok("low")],
   ],
 };
 

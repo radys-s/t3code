@@ -633,6 +633,16 @@ describe("resolveAutoModelSelection", () => {
     }
 
     const codex = other("codex", "codex", "gpt-6-luna", "reasoningEffort");
+    const free = other("free", "opencode", "opencode/beam-free", "variant");
+    const codexWithRoom = { ...codex, usageLimits: claude("fixture", 15).usageLimits };
+    expect(
+      resolveAutoModelSelection({
+        selection: auto("medium"),
+        providers: [free, codexWithRoom],
+        current: { instanceId: free.instanceId, model: "opencode/beam-free" },
+        now,
+      })?.selection.instanceId,
+    ).toBe("codex");
     const grok = other("grok", "grok", "grok-4.7", "reasoningEffort");
     const gemini = other("antigravity", "antigravity", "gemini-3.8-flash", "thinking_level");
     const route = (providers: ServerProvider[]) =>
@@ -651,7 +661,7 @@ describe("resolveAutoModelSelection", () => {
     });
   });
 
-  it("prefers Antigravity Hydrogen at each tier's effort before Antigravity Claude, then falls back to DeepSeek/OpenCode even at high", () => {
+  it("prefers Hydrogen before Antigravity Claude and skips DeepSeek at every Auto level", () => {
     const agyModel = (
       slug: string,
       optionId: string,
@@ -746,14 +756,6 @@ describe("resolveAutoModelSelection", () => {
         ],
       });
     }
-    // Low saves Antigravity: the free models come first, then Hydrogen at low.
-    expect(
-      resolveAutoModelSelection({
-        selection: auto("low"),
-        providers: [...claudeOut, agy(10, 0), openCode],
-        now,
-      })?.selection?.model,
-    ).toBe("opencode/deepseek-v4.1-flash-free");
     expect(
       resolveAutoModelSelection({
         selection: auto("low"),
@@ -799,49 +801,16 @@ describe("resolveAutoModelSelection", () => {
       ],
     });
 
-    // Once Antigravity is depleted too, DeepSeek/OpenCode handles even high routing with effort.
-    expect(
-      resolveAutoModelSelection({
-        selection: auto("high"),
-        providers: [...claudeOut, agy(100, 100), openCode],
-        now,
-      })?.selection,
-    ).toMatchObject({
-      instanceId: "opencode",
-      model: "opencode/deepseek-v4.1-flash-free",
-      options: [
-        { id: "variant", value: "max" },
-        { id: "auto", value: "high" },
-      ],
-    });
-    expect(
-      resolveAutoModelSelection({
-        selection: auto("medium"),
-        providers: [...claudeOut, agy(100, 100), openCode],
-        now,
-      })?.selection,
-    ).toMatchObject({
-      instanceId: "opencode",
-      model: "opencode/deepseek-v4.1-flash-free",
-      options: [
-        { id: "variant", value: "high" },
-        { id: "auto", value: "medium" },
-      ],
-    });
-    expect(
-      resolveAutoModelSelection({
-        selection: auto("low"),
-        providers: [...claudeOut, agy(100, 100), openCode],
-        now,
-      })?.selection,
-    ).toMatchObject({
-      instanceId: "opencode",
-      model: "opencode/deepseek-v4.1-flash-free",
-      options: [
-        { id: "variant", value: "low" },
-        { id: "auto", value: "low" },
-      ],
-    });
+    // Free DeepSeek is reserved for explicitly delegated workers.
+    for (const level of ["high", "medium", "low"] as const) {
+      expect(
+        resolveAutoModelSelection({
+          selection: auto(level),
+          providers: [...claudeOut, agy(100, 100), openCode],
+          now,
+        }),
+      ).toBeNull();
+    }
   });
 
   it("reads the level from auto-low / auto-medium / auto-high", () => {

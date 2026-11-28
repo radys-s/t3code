@@ -430,3 +430,10 @@ at local midnight. Routing strips these windows (ids start with `auto-`), so the
 a soft preference; a test fails without that filter. Also fixed the Effect lint errors that
 `0832307` introduced in the server (node:fs/path imports), missed because the server package
 has no `typecheck` script; checked with `effect-tsgo` directly.
+
+## 2026-11-28: Reserve free DeepSeek for delegated workers
+
+Auto could spend the shared free DeepSeek quota on the main thread and leave the thread
+on a depleted provider. Removed DeepSeek from all three Auto tiers while retaining
+explicit model selection and delegation. Moved the remaining Codex fallbacks ahead of
+free OpenCode in their respective tiers. Kept the Limits-tab and cooldown fixes in the build.
