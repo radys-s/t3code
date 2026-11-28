@@ -706,6 +706,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       },
     },
     {
+      name: "an untyped OpenCode free quota failure",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.unknown",
+        message:
+          "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.",
+      },
+    },
+    {
       name: "a Claude limit without a reset timestamp",
       failureClass: "usage_limit",
       error: {

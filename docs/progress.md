@@ -405,3 +405,10 @@
 - Runtime: `vp run migrate-dev-db --base-dir .t3/verify --projects 3 --threads-per-project 3` copied the live database through a read-only attachment into 2.2 MB of scratch data (3 projects, 4 threads, 144 events) and applied migrations 103-119, including upstream's new `119_WorkflowRunSubject`. `vp run dev:server --home-dir .t3/verify --no-seed --port 13872` listened on 13872, completed V2 recovery and answered HTTP 302. It was stopped through the harness; its seven PIDs are gone and the port is free. No live database write, service restart or deployment. Expected warnings: no Rust resource monitor, and a scratch home inside the repository.
 - What worked: the per-key three-way catalog merge turned 20 conflicted catalogs into a mechanical step, and comparing its result with `i18n:generate` proved that no key or translation was lost.
 - Next: Tomáš merges the PR, then decides deployment separately. Upstream grows the MCP tool-list context from 62055 to 62140 bytes (+85), which needs the maintainer's `agent-context-increase` label. Manifests and the lockfile changed, so deployment needs a dependency install, and a server at migration 118 will apply 119. Follow-up: for an unsent Auto draft, the permission picker could skip the listing instance's Claude limits.
+
+## 2026-11-28: Auto recovers from OpenCode free quota exhaustion
+
+OpenCode can report free quota exhaustion as an untyped provider error. The adapter now
+classifies that specific message as a usage limit so Auto can cool down the instance and
+route the next attempt. The adapter regression reproduced the failure before the fix.
+The OpenCode adapter, Auto failover and routing suites then passed 244 tests.

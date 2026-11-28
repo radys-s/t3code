@@ -639,6 +639,7 @@ const isUsageLimit = (error: {
 }) =>
   (error.type === "provider.quota" && error.status !== 402) ||
   error.type === "provider.rate-limit" ||
+  (error.type === "provider.unknown" && /^Free usage limit reached(?:\.|$)/i.test(error.message)) ||
   claudeUsageLimit(error.message) !== undefined;
 
 const INTERRUPT_TIMEOUT = 10_000;
