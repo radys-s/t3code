@@ -53,10 +53,8 @@ const opencode = (model: string, effort: string): AutoCandidate => ({
 });
 
 /**
- * High and medium prefer Claude, then ChatGPT (Codex), then Claude on Antigravity.
- * Low spends Claude, Antigravity and free OpenCode models before ChatGPT and Grok.
- * Each level has its own ChatGPT models and effort to conserve the plan's allowance.
- * Unlisted models are skipped, including paid models after the plan ends.
+ * High/medium prefer Claude, Codex, Antigravity Hydrogen, Antigravity Claude, Grok, Flash, then OpenCode.
+ * Low spends Claude, Antigravity, and free OpenCode before Codex and Grok. Unlisted models are skipped.
  */
 const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>> = {
   high: [
@@ -64,44 +62,54 @@ const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>>
     codex("gpt-6.2-astra", "high"),
     codex("gpt-6-astra", "high"),
     codex("gpt-6.2-sol", "high"),
+    antigravity("gemini-4-hydrogen", "high"),
     antigravity("claude-opus-4-6-thinking", "high"),
     grok("high"),
     antigravity("gemini-3.8-flash", "high"),
+    opencode("opencode/deepseek-v4.1-flash-free", "max"),
+    opencode("opencode/beam-free", "high"),
+    opencode("opencode/big-pickle", "high"),
+    opencode("opencode/glm-5.3-flash-free", "high"),
   ],
   medium: [
     claude("claude-opus-5-5", "medium"),
     claude("claude-fable-5-2", "medium"),
     codex("gpt-6.2-sol", "medium"),
     codex("gpt-6.1-sol", "medium"),
-    antigravity("claude-opus-4-6-thinking", "medium"),
+    antigravity("gemini-4-hydrogen", "medium"),
     claude("claude-sonnet-5-5", "medium"),
+    antigravity("claude-opus-4-6-thinking", "medium"),
     antigravity("claude-sonnet-4-6", "medium"),
     grok("medium"),
     antigravity("gemini-3.8-flash", "medium"),
+    opencode("opencode/deepseek-v4.1-flash-free", "high"),
+    opencode("opencode/beam-free", "medium"),
     opencode("opencode/big-pickle", "medium"),
+    opencode("opencode/glm-5.3-flash-free", "medium"),
   ],
   low: [
     claude("claude-sonnet-5-5", "low"),
     claude("claude-haiku-5-5", "low"),
+    antigravity("gemini-4-hydrogen", "low"),
     antigravity("claude-sonnet-4-6", "low"),
     antigravity("gemini-3.8-flash", "low"),
-    opencode("opencode/big-pickle", "medium"),
-    opencode("opencode/beam-free", "medium"),
-    opencode("opencode/deepseek-v4.1-flash-free", "medium"),
-    opencode("opencode/glm-5.3-flash-free", "medium"),
+    opencode("opencode/deepseek-v4.1-flash-free", "low"),
+    opencode("opencode/beam-free", "low"),
+    opencode("opencode/big-pickle", "low"),
+    opencode("opencode/glm-5.3-flash-free", "low"),
     codex("gpt-6-luna", "low"),
     codex("gpt-6.1-terra", "low"),
     grok("low"),
   ],
 };
 
-/** The option each driver uses for reasoning effort. */
-const EFFORT_OPTION_ID: Readonly<Record<string, string>> = {
-  claudeAgent: "effort",
-  codex: "reasoningEffort",
-  grok: "reasoningEffort",
-  opencode: "variant",
-  antigravity: "thinking_level",
+/** The option IDs each driver uses for reasoning effort (first matching descriptor wins). */
+const EFFORT_OPTION_IDS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  claudeAgent: ["effort"],
+  codex: ["reasoningEffort"],
+  grok: ["reasoningEffort"],
+  opencode: ["variant"],
+  antigravity: ["thought_level", "thinking_level"],
 };
 
 /**
@@ -288,14 +296,20 @@ function usable(provider: ServerProvider, model: string, now: number): boolean {
 }
 
 function effortOptions(provider: ServerProvider, candidate: AutoCandidate) {
-  const id = EFFORT_OPTION_ID[candidate.driver];
-  const descriptor = provider.models
-    .find((entry) => entry.slug === candidate.model)
-    ?.capabilities?.optionDescriptors?.find((entry) => entry.id === id);
-  if (!id || descriptor?.type !== "select") return undefined;
-  return descriptor.options.some((choice) => choice.id === candidate.effort)
-    ? [{ id, value: candidate.effort }]
-    : undefined;
+  const ids = EFFORT_OPTION_IDS[candidate.driver] ?? [];
+  const descriptors =
+    provider.models.find((entry) => entry.slug === candidate.model)?.capabilities
+      ?.optionDescriptors ?? [];
+  for (const id of ids) {
+    const descriptor = descriptors.find((entry) => entry.id === id);
+    if (
+      descriptor?.type === "select" &&
+      descriptor.options.some((choice) => choice.id === candidate.effort)
+    ) {
+      return [{ id, value: candidate.effort }];
+    }
+  }
+  return undefined;
 }
 
 function toSelection(

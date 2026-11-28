@@ -634,6 +634,174 @@ describe("resolveAutoModelSelection", () => {
     });
   });
 
+  it("prefers Antigravity Hydrogen at level effort before Antigravity Claude, then falls back to DeepSeek/OpenCode even at high", () => {
+    const agyModel = (
+      slug: string,
+      optionId: string,
+      values: ReadonlyArray<string> = ["low", "medium", "high"],
+    ) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: optionId,
+            label: "Thought",
+            type: "select" as const,
+            options: values.map((id) => ({ id, label: id })),
+          },
+        ],
+      },
+    });
+    const agy = (geminiUsed: number, claudeUsed: number) =>
+      ({
+        ...claude("antigravity", 0, false),
+        driver: ProviderDriverKind.make("antigravity"),
+        models: [
+          agyModel("gemini-4-hydrogen", "thought_level", ["low", "medium", "high", "xhigh"]),
+          agyModel("claude-opus-4-6-thinking", "thought_level"),
+          agyModel("claude-sonnet-4-6", "thought_level"),
+          agyModel("gemini-3.8-flash", "thought_level"),
+        ],
+        usageLimits: {
+          windows: [
+            {
+              id: "gemini-5h",
+              kind: "session",
+              label: "Gemini",
+              usedPercent: geminiUsed,
+              resetsAt,
+              modelIds: ["gemini-4-hydrogen", "gemini-3.8-flash"],
+            },
+            {
+              id: "claude-5h",
+              kind: "session",
+              label: "Claude",
+              usedPercent: claudeUsed,
+              resetsAt,
+              modelIds: ["claude-opus-4-6-thinking", "claude-sonnet-4-6"],
+            },
+          ],
+        },
+      }) as unknown as ServerProvider;
+    const openCode = {
+      ...claude("opencode", 0, false),
+      driver: ProviderDriverKind.make("opencode"),
+      models: [
+        {
+          slug: "opencode/deepseek-v4.1-flash-free",
+          name: "DeepSeek V4.1 Flash Free",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "variant",
+                label: "Variant",
+                type: "select" as const,
+                options: ["low", "high", "max"].map((id) => ({ id, label: id })),
+              },
+            ],
+          },
+        },
+      ],
+      usageLimits: undefined,
+    } as unknown as ServerProvider;
+    const claudeOut = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
+
+    // Hydrogen is chosen first at each level's effort.
+    for (const level of ["high", "medium", "low"] as const) {
+      expect(
+        resolveAutoModelSelection({
+          selection: auto(level),
+          providers: [...claudeOut, agy(10, 0), openCode],
+          now,
+        })?.selection,
+      ).toMatchObject({
+        instanceId: "antigravity",
+        model: "gemini-4-hydrogen",
+        options: [
+          { id: "thought_level", value: level },
+          { id: "auto", value: level },
+        ],
+      });
+    }
+
+    // Once Hydrogen is depleted, Antigravity Claude models take over.
+    expect(
+      resolveAutoModelSelection({
+        selection: auto("high"),
+        providers: [...claudeOut, agy(100, 0), openCode],
+        now,
+      })?.selection,
+    ).toMatchObject({
+      instanceId: "antigravity",
+      model: "claude-opus-4-6-thinking",
+      options: [
+        { id: "thought_level", value: "high" },
+        { id: "auto", value: "high" },
+      ],
+    });
+    expect(
+      resolveAutoModelSelection({
+        selection: auto("low"),
+        providers: [...claudeOut, agy(100, 0), openCode],
+        now,
+      })?.selection,
+    ).toMatchObject({
+      instanceId: "antigravity",
+      model: "claude-sonnet-4-6",
+      options: [
+        { id: "thought_level", value: "low" },
+        { id: "auto", value: "low" },
+      ],
+    });
+
+    // Once Antigravity is depleted too, DeepSeek/OpenCode handles even high routing with effort.
+    expect(
+      resolveAutoModelSelection({
+        selection: auto("high"),
+        providers: [...claudeOut, agy(100, 100), openCode],
+        now,
+      })?.selection,
+    ).toMatchObject({
+      instanceId: "opencode",
+      model: "opencode/deepseek-v4.1-flash-free",
+      options: [
+        { id: "variant", value: "max" },
+        { id: "auto", value: "high" },
+      ],
+    });
+    expect(
+      resolveAutoModelSelection({
+        selection: auto("medium"),
+        providers: [...claudeOut, agy(100, 100), openCode],
+        now,
+      })?.selection,
+    ).toMatchObject({
+      instanceId: "opencode",
+      model: "opencode/deepseek-v4.1-flash-free",
+      options: [
+        { id: "variant", value: "high" },
+        { id: "auto", value: "medium" },
+      ],
+    });
+    expect(
+      resolveAutoModelSelection({
+        selection: auto("low"),
+        providers: [...claudeOut, agy(100, 100), openCode],
+        now,
+      })?.selection,
+    ).toMatchObject({
+      instanceId: "opencode",
+      model: "opencode/deepseek-v4.1-flash-free",
+      options: [
+        { id: "variant", value: "low" },
+        { id: "auto", value: "low" },
+      ],
+    });
+  });
+
   it("reads the level from auto-low / auto-medium / auto-high", () => {
     const providers = [claude("claudeAuto", 10)];
     const pick = (model: string) =>
