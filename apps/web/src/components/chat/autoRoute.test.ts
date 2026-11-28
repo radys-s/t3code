@@ -48,6 +48,19 @@ const claudeModels = [
 ];
 
 describe("describeAutoRoute", () => {
+  it("does not predict Hydrogen without the server's quota state", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider(
+        "antigravity",
+        "Antigravity A",
+        "antigravity",
+        [{ slug: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen" }],
+        0,
+      ),
+    ]);
+    expect(describeAutoRoute({ entries, model: "auto-medium", now })).toBeNull();
+  });
+
   it("names the Claude model and account Auto would use", () => {
     const entries = deriveProviderInstanceEntries([
       provider("claudeAuto", "Auto", "claudeAgent", claudeModels, 95),

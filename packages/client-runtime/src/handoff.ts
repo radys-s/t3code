@@ -49,7 +49,12 @@ export function resolvePendingHandoff(
       now,
       current: from,
     });
-    return route === null
+    // Antigravity quotas and turn budgets are server-side. Show the handoff after it is committed.
+    return route === null ||
+      providers.some(
+        (provider) =>
+          provider.instanceId === route.selection.instanceId && provider.driver === "antigravity",
+      )
       ? null
       : resolvePendingHandoff(projection, route.selection, providers, now);
   }

@@ -21,9 +21,8 @@ export function claudeAccountLetter(displayName: string): "A" | "B" {
 }
 
 /**
- * Mirrors the server's routing (same resolver, same live usage snapshots), so the picker shows
- * the model a new message would get. The server still decides per message; a thread already on
- * a model may stay on it.
+ * Estimates a route from client-visible usage. The server decides per message, using
+ * additional state such as Antigravity quota-pool cooldowns and daily turn budgets.
  */
 export function describeAutoRoute(input: {
   readonly entries: ReadonlyArray<ProviderInstanceEntry>;
@@ -46,7 +45,7 @@ export function describeAutoRoute(input: {
     (candidate) => candidate.instanceId === resolution.selection.instanceId,
   );
   const model = entry?.models.find((candidate) => candidate.slug === resolution.selection.model);
-  if (!entry || !model) return null;
+  if (!entry || !model || entry.driverKind === "antigravity") return null;
   const account =
     entry.driverKind === "claudeAgent" ? claudeAccountLetter(entry.displayName) : entry.displayName;
   return {

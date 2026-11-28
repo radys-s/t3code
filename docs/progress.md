@@ -412,3 +412,10 @@ OpenCode can report free quota exhaustion as an untyped provider error. The adap
 classifies that specific message as a usage limit so Auto can cool down the instance and
 route the next attempt. The adapter regression reproduced the failure before the fix.
 The OpenCode adapter, Auto failover and routing suites then passed 244 tests.
+
+## 2026-11-28: Hide speculative Antigravity Auto routes
+
+Both Hydrogen pools were on server cooldown, but the picker preview used only
+client-visible provider snapshots and still named Hydrogen. Auto now omits speculative
+Antigravity destinations from the picker, machine bar and pending handoffs. The server
+still uses the persisted pool cooldowns and records the actual destination at dispatch.
